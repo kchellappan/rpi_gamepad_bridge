@@ -13,6 +13,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <poll.h>
 #include <cstring>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -102,6 +103,8 @@ int cmd_caps(const char* path) {
 
 // ---------------------------------------------------------------- wizard
 
+constexpr int kStepTimeoutMs = 8000;
+
 struct AxisPrompt {
   const char* target;
   const char* instruction;
@@ -111,40 +114,65 @@ struct ButtonPrompt {
   const char* instruction;
 };
 
+// Read whatever is already queued and throw it away. Requires a non-blocking fd: on a
+// blocking one this loop never terminates, because read() waits for the next event rather
+// than reporting that the queue is empty.
 void drain(int fd) {
   input_event e;
   while (::read(fd, &e, sizeof(e)) == sizeof(e)) {
   }
 }
 
+// Block until an event is available or the timeout expires. Returns false on timeout.
+bool wait_readable(int fd, int timeout_ms) {
+  pollfd p{fd, POLLIN, 0};
+  const int n = ::poll(&p, 1, timeout_ms);
+  return n > 0 && (p.revents & POLLIN);
+}
+
+// Wait for the device to go quiet, so a stick still being held (or a button still bouncing)
+// does not bleed into the next prompt and instantly satisfy it.
+void settle(int fd, int quiet_ms, int max_ms) {
+  int waited = 0;
+  while (waited < max_ms) {
+    if (!wait_readable(fd, quiet_ms)) return;  // quiet for the full window
+    drain(fd);
+    waited += quiet_ms;
+  }
+}
+
 // Waits for whichever ABS code moves furthest from its resting value, so the user just
 // pushes the stick and we work out both the code and the direction.
-bool capture_axis(int fd, std::string& code_name, bool& invert) {
+bool capture_axis(int fd, std::string& code_name, bool& invert, int timeout_ms) {
   std::map<uint16_t, int32_t> baseline, extreme;
+  std::map<uint16_t, int32_t> spans;  // cached: EVIOCGABS per event per axis is wasteful
   input_event e;
-  const int kSettleEvents = 400;
-  int seen = 0;
+  int waited = 0;
+  const int kSlice = 100;
 
-  while (seen < kSettleEvents) {
-    const ssize_t n = ::read(fd, &e, sizeof(e));
-    if (n != sizeof(e)) continue;
-    if (e.type != EV_ABS) continue;
-    if (!baseline.count(e.code)) {
-      baseline[e.code] = e.value;
-      extreme[e.code] = e.value;
+  while (waited < timeout_ms) {
+    if (!wait_readable(fd, kSlice)) {
+      waited += kSlice;
+      continue;
     }
-    if (std::abs(e.value - baseline[e.code]) > std::abs(extreme[e.code] - baseline[e.code]))
-      extreme[e.code] = e.value;
-    ++seen;
+    while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
+      if (e.type != EV_ABS) continue;
+      if (!baseline.count(e.code)) {
+        baseline[e.code] = e.value;
+        extreme[e.code] = e.value;
+        input_absinfo info{};
+        ioctl(fd, EVIOCGABS(e.code), &info);
+        spans[e.code] = std::max(info.maximum - info.minimum, 1);
+      }
+      if (std::abs(e.value - baseline[e.code]) > std::abs(extreme[e.code] - baseline[e.code]))
+        extreme[e.code] = e.value;
 
-    // Stop as soon as one axis has clearly committed.
-    for (const auto& [c, v] : extreme) {
-      input_absinfo info{};
-      ioctl(fd, EVIOCGABS(c), &info);
-      const int32_t span = std::max(info.maximum - info.minimum, 1);
-      if (std::abs(v - baseline[c]) > span / 3) {
-        code_name = rgb::evdev_abs_name(c);
-        invert = (v - baseline[c]) < 0;
+      // Commit as soon as one axis has clearly moved. A third of full span is well past
+      // any resting jitter but reachable without pushing the stick perfectly on-axis.
+      const int32_t delta = extreme[e.code] - baseline[e.code];
+      if (std::abs(delta) > spans[e.code] / 3) {
+        code_name = rgb::evdev_abs_name(e.code);
+        invert = delta < 0;
         return true;
       }
     }
@@ -152,28 +180,39 @@ bool capture_axis(int fd, std::string& code_name, bool& invert) {
   return false;
 }
 
-bool capture_button(int fd, std::string& code_name, bool& is_axis, bool& axis_invert) {
+bool capture_button(int fd, std::string& code_name, bool& is_axis, bool& axis_invert,
+                   int timeout_ms) {
   input_event e;
-  while (true) {
-    const ssize_t n = ::read(fd, &e, sizeof(e));
-    if (n != sizeof(e)) continue;
-    if (e.type == EV_KEY && e.value == 1) {
-      code_name = rgb::evdev_key_name(e.code);
-      is_axis = false;
-      return true;
+  int waited = 0;
+  const int kSlice = 100;
+
+  while (waited < timeout_ms) {
+    if (!wait_readable(fd, kSlice)) {
+      waited += kSlice;
+      continue;
     }
-    // Many pads report the d-pad as a hat axis rather than four buttons.
-    if (e.type == EV_ABS && (e.code == ABS_HAT0X || e.code == ABS_HAT0Y) && e.value != 0) {
-      code_name = rgb::evdev_abs_name(e.code);
-      is_axis = true;
-      axis_invert = e.value < 0;
-      return true;
+    while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
+      if (e.type == EV_KEY && e.value == 1) {
+        code_name = rgb::evdev_key_name(e.code);
+        is_axis = false;
+        return true;
+      }
+      // Many pads report the d-pad as a hat axis rather than four buttons.
+      if (e.type == EV_ABS && (e.code == ABS_HAT0X || e.code == ABS_HAT0Y) && e.value != 0) {
+        code_name = rgb::evdev_abs_name(e.code);
+        is_axis = true;
+        axis_invert = e.value < 0;
+        return true;
+      }
     }
   }
+  return false;
 }
 
 int cmd_wizard(const char* path) {
-  int fd = open(path, O_RDONLY);
+  // Non-blocking is mandatory here, not a preference: drain() and the capture loops detect
+  // "nothing more to read" by read() failing, which on a blocking fd simply never happens.
+  int fd = open(path, O_RDONLY | O_NONBLOCK);
   if (fd < 0) {
     std::fprintf(stderr, "open %s: %s\n", path, std::strerror(errno));
     return 1;
@@ -181,7 +220,9 @@ int cmd_wizard(const char* path) {
   std::printf("device: %s\n", device_name(fd).c_str());
   std::printf(
       "\nFollow the prompts. Return the sticks to center between steps.\n"
-      "Press Ctrl-C to abort.\n\n");
+      "Each step times out after %d seconds and is skipped, so you can pass on any\n"
+      "control your pad does not have. Ctrl-C aborts.\n\n",
+      kStepTimeoutMs / 1000);
 
   const AxisPrompt axis_prompts[] = {
       {"lx", "Push the LEFT stick fully RIGHT"},
@@ -203,7 +244,7 @@ int cmd_wizard(const char* path) {
       {"select", "Press SELECT / BACK / the left-hand small button"},
       {"start", "Press START / MENU / the right-hand small button"},
       {"guide", "Press the GUIDE / HOME button"},
-      {"misc1", "Press CAPTURE / SHARE / ASSISTANT (or any key to skip)"},
+      {"misc1", "Press CAPTURE / SHARE / ASSISTANT (or wait to skip)"},
       {"dup", "Press D-PAD UP"},
       {"ddown", "Press D-PAD DOWN"},
       {"dleft", "Press D-PAD LEFT"},
@@ -215,29 +256,30 @@ int cmd_wizard(const char* path) {
   for (const auto& p : axis_prompts) {
     std::printf("  [%-6s] %-44s ... ", p.target, p.instruction);
     std::fflush(stdout);
+    settle(fd, 250, 3000);
     drain(fd);
     std::string code;
     bool invert = false;
-    if (capture_axis(fd, code, invert)) {
+    if (capture_axis(fd, code, invert, kStepTimeoutMs)) {
       // "Fully right" and "fully down" are both the POSITIVE direction in our convention
       // (+X right, +Y down), so a negative excursion means the device is inverted
       // relative to us.
       std::printf("%s%s\n", invert ? "-" : "", code.c_str());
       axis_lines.push_back("axis." + code + " = " + (invert ? "-" : "") + p.target);
     } else {
-      std::printf("(no movement detected, skipped)\n");
+      std::printf("(timed out, skipped)\n");
     }
-    usleep(300000);
   }
 
   std::printf("\n");
   for (const auto& p : button_prompts) {
     std::printf("  [%-6s] %-44s ... ", p.target, p.instruction);
     std::fflush(stdout);
+    settle(fd, 250, 3000);
     drain(fd);
     std::string code;
     bool is_axis = false, axis_invert = false;
-    if (capture_button(fd, code, is_axis, axis_invert)) {
+    if (capture_button(fd, code, is_axis, axis_invert, kStepTimeoutMs)) {
       std::printf("%s\n", code.c_str());
       if (is_axis) {
         const std::string t = (code == "ABS_HAT0X") ? "hatx" : "haty";
@@ -247,8 +289,9 @@ int cmd_wizard(const char* path) {
       } else {
         button_lines.push_back("button." + code + " = " + p.target);
       }
+    } else {
+      std::printf("(timed out, skipped)\n");
     }
-    usleep(300000);
   }
   close(fd);
 

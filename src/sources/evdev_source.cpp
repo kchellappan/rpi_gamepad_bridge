@@ -10,6 +10,7 @@
 #include <array>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include "rgb/rt.hpp"
 
 namespace rgb {
@@ -86,6 +87,21 @@ uint16_t evdev_code_from_name(const std::string& name, bool& ok) {
     if (name == e.name) return e.code;
   for (const auto& e : kKeyCodes)
     if (name == e.name) return e.code;
+
+  // Numeric fallback, e.g. "KEY_114". The name tables cover the codes a gamepad usually
+  // emits, but pads do use codes outside that set -- the Stadia controller reports
+  // KEY_114/115/164 for its media keys. evdev_key_name() prints those numerically, so
+  // without this the wizard would emit config lines that the parser silently discarded,
+  // and a binding would just quietly not exist.
+  for (const char* prefix : {"KEY_", "BTN_", "ABS_"}) {
+    const size_t plen = std::strlen(prefix);
+    if (name.size() <= plen || name.compare(0, plen, prefix) != 0) continue;
+    const std::string digits = name.substr(plen);
+    if (digits.find_first_not_of("0123456789") != std::string::npos) continue;
+    const unsigned long v = std::strtoul(digits.c_str(), nullptr, 10);
+    if (v <= KEY_MAX) return static_cast<uint16_t>(v);
+  }
+
   ok = false;
   return 0;
 }

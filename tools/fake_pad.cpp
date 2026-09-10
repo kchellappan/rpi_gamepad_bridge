@@ -1,0 +1,170 @@
+// rgb-fakepad -- a synthetic gamepad, created through uinput.
+//
+// Exists so the evdev path can be exercised without a human and without hardware: the
+// wizard, the bridge, and the mapping config can all be driven end to end in CI or on a
+// dev box. It was written after a blocking-read bug meant the wizard hung on its very
+// first prompt, which no amount of reading the code had caught but a scripted pad would
+// have found immediately.
+//
+//   rgb-fakepad --hold             create the device and idle (drive it yourself)
+//   rgb-fakepad --wizard-script    emit the exact sequence rgb-discover wizard prompts for
+//
+// Needs write access to /dev/uinput, so in practice: sudo.
+
+#include <fcntl.h>
+#include <linux/uinput.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace {
+
+constexpr int kAbsCodes[] = {ABS_X, ABS_Y, ABS_Z, ABS_RZ, ABS_GAS, ABS_BRAKE};
+constexpr int kHatCodes[] = {ABS_HAT0X, ABS_HAT0Y};
+constexpr int kBtnCodes[] = {BTN_SOUTH, BTN_EAST,   BTN_NORTH,  BTN_WEST,
+                             BTN_TL,    BTN_TR,     BTN_THUMBL, BTN_THUMBR,
+                             BTN_SELECT, BTN_START, BTN_MODE,   BTN_TRIGGER_HAPPY1};
+
+void emit(int fd, uint16_t type, uint16_t code, int32_t value) {
+  input_event e{};
+  e.type = type;
+  e.code = code;
+  e.value = value;
+  if (::write(fd, &e, sizeof(e)) != sizeof(e))
+    std::fprintf(stderr, "uinput write failed: %s\n", std::strerror(errno));
+}
+
+void sync(int fd) { emit(fd, EV_SYN, SYN_REPORT, 0); }
+
+int create_device() {
+  int fd = ::open("/dev/uinput", O_WRONLY | O_NONBLOCK);
+  if (fd < 0) {
+    std::fprintf(stderr, "open /dev/uinput: %s (try sudo)\n", std::strerror(errno));
+    return -1;
+  }
+  ioctl(fd, UI_SET_EVBIT, EV_KEY);
+  ioctl(fd, UI_SET_EVBIT, EV_ABS);
+  ioctl(fd, UI_SET_EVBIT, EV_SYN);
+  for (int c : kBtnCodes) ioctl(fd, UI_SET_KEYBIT, c);
+  for (int c : kAbsCodes) ioctl(fd, UI_SET_ABSBIT, c);
+  for (int c : kHatCodes) ioctl(fd, UI_SET_ABSBIT, c);
+
+  uinput_user_dev dev{};
+  std::snprintf(dev.name, UINPUT_MAX_NAME_SIZE, "rgb-fakepad");
+  dev.id.bustype = BUS_USB;
+  dev.id.vendor = 0x1209;   // pid.codes, the free VID for open hardware
+  dev.id.product = 0x0001;
+  dev.id.version = 1;
+  // Mirror the Stadia controller's real ranges, including its 1..255 sticks, so anything
+  // tested against this pad meets the same edge cases the real device presents.
+  for (int c : kAbsCodes) {
+    dev.absmin[c] = (c == ABS_GAS || c == ABS_BRAKE) ? 0 : 1;
+    dev.absmax[c] = 255;
+    dev.absflat[c] = 15;
+  }
+  for (int c : kHatCodes) {
+    dev.absmin[c] = -1;
+    dev.absmax[c] = 1;
+  }
+  if (::write(fd, &dev, sizeof(dev)) != sizeof(dev)) {
+    std::fprintf(stderr, "uinput setup write: %s\n", std::strerror(errno));
+    return -1;
+  }
+  if (ioctl(fd, UI_DEV_CREATE) < 0) {
+    std::fprintf(stderr, "UI_DEV_CREATE: %s\n", std::strerror(errno));
+    return -1;
+  }
+  return fd;
+}
+
+void axis_pulse(int fd, uint16_t code, int32_t to, int32_t rest) {
+  emit(fd, EV_ABS, code, to);
+  sync(fd);
+  usleep(250000);
+  emit(fd, EV_ABS, code, rest);
+  sync(fd);
+}
+
+void button_pulse(int fd, uint16_t code) {
+  emit(fd, EV_KEY, code, 1);
+  sync(fd);
+  usleep(150000);
+  emit(fd, EV_KEY, code, 0);
+  sync(fd);
+}
+
+int run_wizard_script(int fd) {
+  // Order must match rgb-discover wizard's prompts exactly.
+  const int gap_us = 1500000;
+  std::printf("driving the wizard's prompt sequence...\n");
+
+  usleep(gap_us);
+  struct { const char* label; uint16_t code; int32_t to; int32_t rest; } axes[] = {
+      {"lx -> right", ABS_X, 255, 128},
+      {"ly -> down",  ABS_Y, 255, 128},
+      {"rx -> right", ABS_Z, 255, 128},
+      {"ry -> down",  ABS_RZ, 255, 128},
+      {"lt",          ABS_BRAKE, 255, 0},
+      {"rt",          ABS_GAS, 255, 0},
+  };
+  for (const auto& a : axes) {
+    std::printf("  %s\n", a.label);
+    std::fflush(stdout);
+    axis_pulse(fd, a.code, a.to, a.rest);
+    usleep(gap_us);
+  }
+
+  const uint16_t btns[] = {BTN_SOUTH, BTN_EAST, BTN_WEST, BTN_NORTH,
+                           BTN_TL,    BTN_TR,   BTN_THUMBL, BTN_THUMBR,
+                           BTN_SELECT, BTN_START, BTN_MODE, BTN_TRIGGER_HAPPY1};
+  const char* names[] = {"south", "east", "west", "north", "l1", "r1",
+                         "l3", "r3", "select", "start", "guide", "misc1"};
+  for (size_t i = 0; i < sizeof(btns) / sizeof(btns[0]); ++i) {
+    std::printf("  %s\n", names[i]);
+    std::fflush(stdout);
+    button_pulse(fd, btns[i]);
+    usleep(gap_us);
+  }
+
+  struct { const char* label; uint16_t code; int32_t v; } hats[] = {
+      {"dup", ABS_HAT0Y, -1}, {"ddown", ABS_HAT0Y, 1},
+      {"dleft", ABS_HAT0X, -1}, {"dright", ABS_HAT0X, 1},
+  };
+  for (const auto& h : hats) {
+    std::printf("  %s\n", h.label);
+    std::fflush(stdout);
+    axis_pulse(fd, h.code, h.v, 0);
+    usleep(gap_us);
+  }
+  std::printf("script complete\n");
+  return 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  const std::string mode = argc > 1 ? argv[1] : "";
+  if (mode != "--hold" && mode != "--wizard-script") {
+    std::fprintf(stderr, "usage: %s [--hold | --wizard-script]\n", argv[0]);
+    return 2;
+  }
+  int fd = create_device();
+  if (fd < 0) return 1;
+  // udev needs a moment to publish the node before anyone can open it.
+  usleep(400000);
+  std::printf("created virtual pad \"rgb-fakepad\"\n");
+
+  int rc = 0;
+  if (mode == "--wizard-script") rc = run_wizard_script(fd);
+  else { std::printf("holding; Ctrl-C to remove\n"); pause(); }
+
+  ioctl(fd, UI_DEV_DESTROY);
+  ::close(fd);
+  return rc;
+}

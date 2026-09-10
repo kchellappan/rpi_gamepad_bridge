@@ -35,4 +35,7 @@ target_link_libraries(rgb-bridge PRIVATE rgb_core)
 add_executable(rgb-discover tools/discover.cpp)
 target_link_libraries(rgb-discover PRIVATE rgb_core)
 
-install(TARGETS rgb-bridge rgb-discover RUNTIME DESTINATION bin)
+# Synthetic gamepad for testing the evdev path without hardware or a human.
+add_executable(rgb-fakepad tools/fake_pad.cpp)
+
+install(TARGETS rgb-bridge rgb-discover rgb-fakepad RUNTIME DESTINATION bin)

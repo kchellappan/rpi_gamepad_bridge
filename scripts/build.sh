@@ -31,9 +31,11 @@ else
   g++ "${FLAGS[@]}" "${CORE_SRC[@]}" src/main.cpp     -o "$BUILD_DIR/rgb-bridge"   -lpthread
   echo "    rgb-discover"
   g++ "${FLAGS[@]}" "${CORE_SRC[@]}" tools/discover.cpp -o "$BUILD_DIR/rgb-discover" -lpthread
+  echo "    rgb-fakepad"
+  g++ "${FLAGS[@]}" tools/fake_pad.cpp -o "$BUILD_DIR/rgb-fakepad"
 fi
 
 echo
-ls -la "$BUILD_DIR"/rgb-bridge "$BUILD_DIR"/rgb-discover
+ls -la "$BUILD_DIR"/rgb-bridge "$BUILD_DIR"/rgb-discover "$BUILD_DIR"/rgb-fakepad
 echo
 echo "next: ./$BUILD_DIR/rgb-discover list"
