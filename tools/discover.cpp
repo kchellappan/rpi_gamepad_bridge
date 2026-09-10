@@ -119,7 +119,9 @@ struct AbsInfo {
   int32_t neutral = 0;   // resting value
   int32_t span = 1;
   int32_t lo = 0, hi = 0;
-  // False when the resting value is a guess rather than a reading. See sample_neutral().
+  // False when `neutral` is the midpoint fallback rather than a reading from the kernel.
+  // Recorded for the startup diagnostic; rest checks trust it either way, because the
+  // axes that need the fallback are exactly the ones whose midpoint is their centre.
   bool confirmed = false;
 };
 
@@ -174,17 +176,6 @@ std::map<uint16_t, AbsInfo> sample_neutral(int fd) {
   return out;
 }
 
-// Once an axis has actually moved, its post-release value is a real reading, so adopt it
-// as the neutral and start enforcing rest against it.
-void confirm_axis(int fd, std::map<uint16_t, AbsInfo>& neutral, uint16_t code) {
-  auto it = neutral.find(code);
-  if (it == neutral.end()) return;
-  input_absinfo info{};
-  if (ioctl(fd, EVIOCGABS(code), &info) != 0) return;
-  if (info.value < info.minimum || info.value > info.maximum) return;
-  it->second.neutral = info.value;
-  it->second.confirmed = true;
-}
 
 std::string rgb_abs_label(uint16_t code) { return gpb::evdev_abs_name(code); }
 
@@ -219,8 +210,6 @@ bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral, int timeo
     }
     if (at_rest) {
       for (const auto& [code, a] : neutral) {
-        // Never block on an axis whose resting value we only guessed at.
-        if (!a.confirmed) continue;
         input_absinfo info{};
         if (ioctl(fd, EVIOCGABS(code), &info) != 0) continue;
         if (std::abs(info.value - a.neutral) > a.span / 8) {
@@ -381,12 +370,7 @@ int cmd_wizard(const char* path) {
       std::printf("%s%s\n", invert ? "-" : "", code.c_str());
       axis_lines.push_back("axis." + code + " = " + (invert ? "-" : "") + p.target);
       bool ok = false;
-      const uint16_t bound = gpb::evdev_code_from_name(code, ok);
-      used_axes.insert(bound);
-      // Let the axis come back to rest, then adopt that as its true neutral.
-      std::string ignored;
-      wait_for_rest(fd, neutral, 2000, ignored);
-      confirm_axis(fd, neutral, bound);
+      used_axes.insert(gpb::evdev_code_from_name(code, ok));
     } else {
       std::printf("(timed out, skipped)\n");
     }
