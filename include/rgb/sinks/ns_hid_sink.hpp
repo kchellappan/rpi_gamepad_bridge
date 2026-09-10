@@ -51,6 +51,7 @@ class NsHidSink final : public OutputSink {
   std::string path_ = "/dev/hidg0";
   int fd_ = -1;
   bool pending_ = false;
+  int last_errno_ = 0;   // errno from the most recent write, captured before it can be clobbered
   bool face_by_position_ = true;
   PokkenReport pending_report_{};
   std::chrono::nanoseconds cadence_{0};

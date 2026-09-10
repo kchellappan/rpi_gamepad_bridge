@@ -62,10 +62,30 @@ bool NsHidSink::initialize(std::string& err) {
   }
   // Park the pad in a neutral state so the console sees a sane controller at enumeration
   // rather than whatever the struct happened to contain.
+  //
+  // This doubles as a probe. A gadget with no host attached fails with ESHUTDOWN, which is
+  // entirely normal -- but pointing this sink at something that is not a HID gadget fails
+  // with EINVAL or ENODEV, and that is a misconfiguration we should refuse at startup
+  // rather than rediscover on every single write. (Ask how I know: a careless sed pointed
+  // the sink at the controller's own evdev node, and the only symptom was an endless
+  // stream of "write: Invalid argument".)
   PokkenReport neutral{};
   neutral.hat = kHatNeutral;
   neutral.lx = neutral.ly = neutral.rx = neutral.ry = 0x80;
-  write_report(neutral);
+  if (!write_report(neutral)) {
+    switch (last_errno_) {
+      case ESHUTDOWN:
+      case EAGAIN:
+      case EBUSY:
+        break;  // no host yet, or not ready -- fine, the bridge can wait
+      default:
+        err = "device " + path_ + " rejected an 8-byte HID report (" +
+              std::strerror(last_errno_) + "); is it really a HID gadget?";
+        ::close(fd_);
+        fd_ = -1;
+        return false;
+    }
+  }
   std::fprintf(stderr, "[ns_hid] gadget open at %s\n", path_.c_str());
   return true;
 }
@@ -116,10 +136,15 @@ PokkenReport NsHidSink::encode(const GamepadState& s, bool face_by_position) {
 
 bool NsHidSink::write_report(const PokkenReport& r) {
   const ssize_t n = ::write(fd_, &r, sizeof(r));
-  if (n == static_cast<ssize_t>(sizeof(r))) return true;
-  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return false;
-  if (n < 0 && errno == ESHUTDOWN) return false;  // host not listening yet
-  if (n < 0) std::fprintf(stderr, "[ns_hid] write: %s\n", std::strerror(errno));
+  if (n == static_cast<ssize_t>(sizeof(r))) {
+    last_errno_ = 0;
+    return true;
+  }
+  // Capture errno before anything else can clobber it -- fprintf is entitled to.
+  last_errno_ = (n < 0) ? errno : EIO;
+  if (last_errno_ == EAGAIN || last_errno_ == EWOULDBLOCK) return false;
+  if (last_errno_ == ESHUTDOWN) return false;  // no host polling us yet; normal
+  std::fprintf(stderr, "[ns_hid] write: %s\n", std::strerror(last_errno_));
   return false;
 }
 
