@@ -144,8 +144,27 @@ void settle(int fd, int quiet_ms, int max_ms) {
 // Waits for whichever ABS code moves furthest from its resting value, so the user just
 // pushes the stick and we work out both the code and the direction.
 bool capture_axis(int fd, std::string& code_name, bool& invert, int timeout_ms) {
-  std::map<uint16_t, int32_t> baseline, extreme;
-  std::map<uint16_t, int32_t> spans;  // cached: EVIOCGABS per event per axis is wasteful
+  // Seed every axis's resting value up front, from the kernel, rather than from the first
+  // event that arrives.
+  //
+  // This distinction is the whole correctness of the invert detection. An axis at rest
+  // emits nothing, so the first event we ever see for it IS the deflection. Treating that
+  // as the baseline makes the deflection look like zero movement, and the only excursion
+  // large enough to trip the threshold is then the *release* back to center -- which
+  // points the opposite way. The symptom is every axis reported inverted, which is exactly
+  // wrong rather than obviously broken.
+  std::map<uint16_t, int32_t> baseline, extreme, spans;
+  unsigned long absbits[ABS_MAX / (8 * sizeof(long)) + 1] = {0};
+  ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(absbits)), absbits);
+  for (int c = 0; c <= ABS_MAX; ++c) {
+    if (!bit_set(absbits, c)) continue;
+    input_absinfo info{};
+    if (ioctl(fd, EVIOCGABS(c), &info) != 0) continue;
+    baseline[static_cast<uint16_t>(c)] = info.value;
+    extreme[static_cast<uint16_t>(c)] = info.value;
+    spans[static_cast<uint16_t>(c)] = std::max(info.maximum - info.minimum, 1);
+  }
+
   input_event e;
   int waited = 0;
   const int kSlice = 100;
@@ -156,14 +175,7 @@ bool capture_axis(int fd, std::string& code_name, bool& invert, int timeout_ms) 
       continue;
     }
     while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
-      if (e.type != EV_ABS) continue;
-      if (!baseline.count(e.code)) {
-        baseline[e.code] = e.value;
-        extreme[e.code] = e.value;
-        input_absinfo info{};
-        ioctl(fd, EVIOCGABS(e.code), &info);
-        spans[e.code] = std::max(info.maximum - info.minimum, 1);
-      }
+      if (e.type != EV_ABS || !baseline.count(e.code)) continue;
       if (std::abs(e.value - baseline[e.code]) > std::abs(extreme[e.code] - baseline[e.code]))
         extreme[e.code] = e.value;
 
