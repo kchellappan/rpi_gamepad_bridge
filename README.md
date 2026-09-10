@@ -265,13 +265,32 @@ Tested on an x86 Linux box, substituting a regular file for `/dev/hidg0`:
   through the socket produced byte-identical HID output. This is what the
   `emits_canonical()` flag protects -- see below.
 
-Still unverified, because it needs the actual hardware:
+Verified on the target hardware (Pi 5 Model B Rev 1.0, Debian 13, kernel 6.18.34, arm64):
 
-- Gadget enumeration on the Pi 5, and whether the link comes up at high speed.
-- Whether the Switch accepts the descriptor (the Pokken report layout is reproduced from
-  prior art, not measured).
-- **The Stadia controller's evdev codes.** The shipped config is a guess and is marked as
-  one; `rgb-discover wizard` produces the real answer in about a minute.
+- Builds clean on gcc 14 / aarch64 with `-Wall -Wextra -Wpedantic`, via both cmake and the
+  bare-g++ fallback.
+- `dwc2` comes up in peripheral mode: `usb@480000 status=okay dr_mode=peripheral`, UDC
+  `1000480000.usb` present, `maximum_speed=high-speed` -- which is the 1ms polling interval
+  we wanted, and confirms there is nothing to tune in the descriptor.
+- The gadget enumerates: `/dev/hidg0` is created, and the 76-byte report descriptor reads
+  back byte-identical to the one written.
+- `rgb-discover` identifies the Stadia controller and its capabilities. The axis layout is
+  confirmed: sticks on `ABS_X`/`ABS_Y` and `ABS_Z`/`ABS_RZ`, triggers on
+  `ABS_GAS`/`ABS_BRAKE`, d-pad on `ABS_HAT0X`/`ABS_HAT0Y`. Note the sticks report
+  `min=1 max=255`, not `0..255`, which is why axis ranges are read from the kernel with
+  `EVIOCGABS` rather than assumed.
+- `rgb-bridge` runs end to end against the real controller and the real gadget: binds 8
+  axes and 12 buttons, grabs the device, and idles cleanly with no host attached.
+
+Still unverified, because each needs a human or a console in the loop:
+
+- **Which physical face button is which.** `caps` proves `BTN_SOUTH/EAST/NORTH/WEST` all
+  exist, but not where they sit -- see the alias trap below. `rgb-discover wizard` settles
+  it in about a minute.
+- Whether `ABS_BRAKE` is the left trigger and `ABS_GAS` the right (the conventional
+  assignment, and what the config assumes) rather than the reverse.
+- Whether the Switch accepts the descriptor. The Pokken report layout is reproduced from
+  prior art, not measured, and it is the piece with the most genuine uncertainty behind it.
 
 ### Two traps worth knowing about
 
@@ -289,5 +308,7 @@ emits_canonical()` marks sources that already speak post-transform action space
 
 ## Status
 
-Stadia -> Switch implemented end to end; verified in software, pending hardware bring-up.
+Stadia -> Switch implemented end to end. Bring-up complete on the target Pi 5: gadget
+enumerates at high speed, controller reads, bridge runs. Awaiting the button-mapping wizard
+run and a real Switch.
 Not yet done: XInput/PC sink, cross-compilation, the interactive latency harness.
