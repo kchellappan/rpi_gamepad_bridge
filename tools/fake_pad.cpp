@@ -110,10 +110,16 @@ int create_device() {
   return fd;
 }
 
+// How long a deflection is held before releasing. "Sloppy" holds long enough that the
+// release lands inside the NEXT prompt's window, which is how a human actually moves a
+// stick and is precisely the case that broke the wizard: one movement answering several
+// prompts in a row.
+int g_hold_us = 250000;
+
 void axis_pulse(int fd, uint16_t code, int32_t to, int32_t rest) {
   emit(fd, EV_ABS, code, to);
   sync(fd);
-  usleep(250000);
+  usleep(g_hold_us);
   emit(fd, EV_ABS, code, rest);
   sync(fd);
 }
@@ -179,10 +185,14 @@ int run_wizard_script(int fd, int lead_in_ms) {
 
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "";
-  if (mode != "--hold" && mode != "--wizard-script") {
-    std::fprintf(stderr, "usage: %s [--hold | --wizard-script [lead_in_ms]]\n", argv[0]);
+  if (mode != "--hold" && mode != "--wizard-script" && mode != "--wizard-script-sloppy") {
+    std::fprintf(stderr,
+                 "usage: %s [--hold | --wizard-script [lead_in_ms] | "
+                 "--wizard-script-sloppy [lead_in_ms]]\n",
+                 argv[0]);
     return 2;
   }
+  if (mode == "--wizard-script-sloppy") g_hold_us = 1400000;
   const int lead_in_ms = argc > 2 ? std::atoi(argv[2]) : 6000;
 
   int fd = create_device();
@@ -195,7 +205,7 @@ int main(int argc, char** argv) {
   std::fflush(stdout);
 
   int rc = 0;
-  if (mode == "--wizard-script") rc = run_wizard_script(fd, lead_in_ms);
+  if (mode != "--hold") rc = run_wizard_script(fd, lead_in_ms);
   else { std::printf("holding; Ctrl-C to remove\n"); std::fflush(stdout); pause(); }
 
   ioctl(fd, UI_DEV_DESTROY);

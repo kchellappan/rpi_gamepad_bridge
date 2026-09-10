@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -103,8 +104,6 @@ int cmd_caps(const char* path) {
 
 // ---------------------------------------------------------------- wizard
 
-constexpr int kStepTimeoutMs = 8000;
-
 struct AxisPrompt {
   const char* target;
   const char* instruction;
@@ -112,6 +111,13 @@ struct AxisPrompt {
 struct ButtonPrompt {
   const char* target;
   const char* instruction;
+};
+
+constexpr int kStepTimeoutMs = 8000;
+
+struct AbsInfo {
+  int32_t neutral = 0;   // resting value, sampled once while the pad is untouched
+  int32_t span = 1;
 };
 
 // Read whatever is already queued and throw it away. Requires a non-blocking fd: on a
@@ -123,47 +129,74 @@ void drain(int fd) {
   }
 }
 
-// Block until an event is available or the timeout expires. Returns false on timeout.
 bool wait_readable(int fd, int timeout_ms) {
   pollfd p{fd, POLLIN, 0};
   const int n = ::poll(&p, 1, timeout_ms);
   return n > 0 && (p.revents & POLLIN);
 }
 
-// Wait for the device to go quiet, so a stick still being held (or a button still bouncing)
-// does not bleed into the next prompt and instantly satisfy it.
-void settle(int fd, int quiet_ms, int max_ms) {
-  int waited = 0;
-  while (waited < max_ms) {
-    if (!wait_readable(fd, quiet_ms)) return;  // quiet for the full window
-    drain(fd);
-    waited += quiet_ms;
-  }
-}
-
-// Waits for whichever ABS code moves furthest from its resting value, so the user just
-// pushes the stick and we work out both the code and the direction.
-bool capture_axis(int fd, std::string& code_name, bool& invert, int timeout_ms) {
-  // Seed every axis's resting value up front, from the kernel, rather than from the first
-  // event that arrives.
-  //
-  // This distinction is the whole correctness of the invert detection. An axis at rest
-  // emits nothing, so the first event we ever see for it IS the deflection. Treating that
-  // as the baseline makes the deflection look like zero movement, and the only excursion
-  // large enough to trip the threshold is then the *release* back to center -- which
-  // points the opposite way. The symptom is every axis reported inverted, which is exactly
-  // wrong rather than obviously broken.
-  std::map<uint16_t, int32_t> baseline, extreme, spans;
+std::map<uint16_t, AbsInfo> sample_neutral(int fd) {
+  std::map<uint16_t, AbsInfo> out;
   unsigned long absbits[ABS_MAX / (8 * sizeof(long)) + 1] = {0};
   ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(absbits)), absbits);
   for (int c = 0; c <= ABS_MAX; ++c) {
     if (!bit_set(absbits, c)) continue;
     input_absinfo info{};
     if (ioctl(fd, EVIOCGABS(c), &info) != 0) continue;
-    baseline[static_cast<uint16_t>(c)] = info.value;
-    extreme[static_cast<uint16_t>(c)] = info.value;
-    spans[static_cast<uint16_t>(c)] = std::max(info.maximum - info.minimum, 1);
+    AbsInfo a;
+    a.neutral = info.value;
+    a.span = std::max(info.maximum - info.minimum, 1);
+    out[static_cast<uint16_t>(c)] = a;
   }
+  return out;
+}
+
+bool any_key_down(int fd) {
+  unsigned long keys[KEY_MAX / (8 * sizeof(long)) + 1] = {0};
+  if (ioctl(fd, EVIOCGKEY(sizeof(keys)), keys) < 0) return false;
+  for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
+    if (keys[i]) return true;
+  return false;
+}
+
+// Wait until the pad is genuinely back at rest -- every axis near its neutral and no
+// button held.
+//
+// The distinction between "at rest" and "quiet" is the bug this replaces. A stick held at
+// full deflection generates no events at all, so an idle-detector sees silence and
+// declares the pad settled. The next prompt then starts with the stick already deflected,
+// and the release back to center is a full-span excursion that satisfies it instantly.
+// One physical movement could answer three consecutive prompts.
+bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral, int timeout_ms) {
+  int waited = 0;
+  const int kSlice = 100;
+  while (waited < timeout_ms) {
+    drain(fd);
+    bool at_rest = !any_key_down(fd);
+    if (at_rest) {
+      for (const auto& [code, a] : neutral) {
+        input_absinfo info{};
+        if (ioctl(fd, EVIOCGABS(code), &info) != 0) continue;
+        if (std::abs(info.value - a.neutral) > a.span / 8) {
+          at_rest = false;
+          break;
+        }
+      }
+    }
+    if (at_rest) return true;
+    usleep(kSlice * 1000);
+    waited += kSlice;
+  }
+  return false;
+}
+
+// `exclude` holds codes already bound to an earlier target. Without it, the residual
+// motion of a stick that has just answered one prompt happily answers the next.
+bool capture_axis(int fd, const std::map<uint16_t, AbsInfo>& neutral,
+                  const std::set<uint16_t>& exclude, std::string& code_name, bool& invert,
+                  int timeout_ms) {
+  std::map<uint16_t, int32_t> extreme;
+  for (const auto& [code, a] : neutral) extreme[code] = a.neutral;
 
   input_event e;
   int waited = 0;
@@ -175,14 +208,18 @@ bool capture_axis(int fd, std::string& code_name, bool& invert, int timeout_ms) 
       continue;
     }
     while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
-      if (e.type != EV_ABS || !baseline.count(e.code)) continue;
-      if (std::abs(e.value - baseline[e.code]) > std::abs(extreme[e.code] - baseline[e.code]))
-        extreme[e.code] = e.value;
+      if (e.type != EV_ABS) continue;
+      auto it = neutral.find(e.code);
+      if (it == neutral.end()) continue;
+      if (exclude.count(e.code)) continue;
 
-      // Commit as soon as one axis has clearly moved. A third of full span is well past
-      // any resting jitter but reachable without pushing the stick perfectly on-axis.
-      const int32_t delta = extreme[e.code] - baseline[e.code];
-      if (std::abs(delta) > spans[e.code] / 3) {
+      const int32_t base = it->second.neutral;
+      if (std::abs(e.value - base) > std::abs(extreme[e.code] - base)) extreme[e.code] = e.value;
+
+      // A third of full span is well past resting jitter but reachable without pushing
+      // the stick perfectly on-axis.
+      const int32_t delta = extreme[e.code] - base;
+      if (std::abs(delta) > it->second.span / 3) {
         code_name = rgb::evdev_abs_name(e.code);
         invert = delta < 0;
         return true;
@@ -192,8 +229,8 @@ bool capture_axis(int fd, std::string& code_name, bool& invert, int timeout_ms) 
   return false;
 }
 
-bool capture_button(int fd, std::string& code_name, bool& is_axis, bool& axis_invert,
-                   int timeout_ms) {
+bool capture_button(int fd, const std::set<uint16_t>& exclude_keys, std::string& code_name,
+                    bool& is_axis, bool& axis_invert, int timeout_ms) {
   input_event e;
   int waited = 0;
   const int kSlice = 100;
@@ -204,12 +241,13 @@ bool capture_button(int fd, std::string& code_name, bool& is_axis, bool& axis_in
       continue;
     }
     while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
-      if (e.type == EV_KEY && e.value == 1) {
+      if (e.type == EV_KEY && e.value == 1 && !exclude_keys.count(e.code)) {
         code_name = rgb::evdev_key_name(e.code);
         is_axis = false;
         return true;
       }
-      // Many pads report the d-pad as a hat axis rather than four buttons.
+      // Many pads report the d-pad as a hat axis rather than four buttons. Hat codes are
+      // deliberately NOT excluded after use: up and down legitimately share ABS_HAT0Y.
       if (e.type == EV_ABS && (e.code == ABS_HAT0X || e.code == ABS_HAT0Y) && e.value != 0) {
         code_name = rgb::evdev_abs_name(e.code);
         is_axis = true;
@@ -230,10 +268,18 @@ int cmd_wizard(const char* path) {
     return 1;
   }
   std::printf("device: %s\n", device_name(fd).c_str());
+
+  std::printf("\nLet go of the controller -- sampling its resting position ... ");
+  std::fflush(stdout);
+  usleep(1200000);
+  drain(fd);
+  const auto neutral = sample_neutral(fd);
+  std::printf("%zu axes\n", neutral.size());
+
   std::printf(
-      "\nFollow the prompts. Return the sticks to center between steps.\n"
-      "Each step times out after %d seconds and is skipped, so you can pass on any\n"
-      "control your pad does not have. Ctrl-C aborts.\n\n",
+      "\nFollow the prompts, releasing fully between steps. Each step times out\n"
+      "after %d seconds and is skipped, so you can pass on any control your pad\n"
+      "does not have. Ctrl-C aborts.\n\n",
       kStepTimeoutMs / 1000);
 
   const AxisPrompt axis_prompts[] = {
@@ -264,20 +310,24 @@ int cmd_wizard(const char* path) {
   };
 
   std::vector<std::string> axis_lines, button_lines;
+  std::set<uint16_t> used_axes, used_keys;
 
   for (const auto& p : axis_prompts) {
     std::printf("  [%-6s] %-44s ... ", p.target, p.instruction);
     std::fflush(stdout);
-    settle(fd, 250, 3000);
+    if (!wait_for_rest(fd, neutral, 5000))
+      std::printf("(still not at rest) ");
     drain(fd);
+
     std::string code;
     bool invert = false;
-    if (capture_axis(fd, code, invert, kStepTimeoutMs)) {
+    if (capture_axis(fd, neutral, used_axes, code, invert, kStepTimeoutMs)) {
       // "Fully right" and "fully down" are both the POSITIVE direction in our convention
-      // (+X right, +Y down), so a negative excursion means the device is inverted
-      // relative to us.
+      // (+X right, +Y down), so a negative excursion means the device disagrees with us.
       std::printf("%s%s\n", invert ? "-" : "", code.c_str());
       axis_lines.push_back("axis." + code + " = " + (invert ? "-" : "") + p.target);
+      bool ok = false;
+      used_axes.insert(rgb::evdev_code_from_name(code, ok));
     } else {
       std::printf("(timed out, skipped)\n");
     }
@@ -287,11 +337,12 @@ int cmd_wizard(const char* path) {
   for (const auto& p : button_prompts) {
     std::printf("  [%-6s] %-44s ... ", p.target, p.instruction);
     std::fflush(stdout);
-    settle(fd, 250, 3000);
+    wait_for_rest(fd, neutral, 5000);
     drain(fd);
+
     std::string code;
     bool is_axis = false, axis_invert = false;
-    if (capture_button(fd, code, is_axis, axis_invert, kStepTimeoutMs)) {
+    if (capture_button(fd, used_keys, code, is_axis, axis_invert, kStepTimeoutMs)) {
       std::printf("%s\n", code.c_str());
       if (is_axis) {
         const std::string t = (code == "ABS_HAT0X") ? "hatx" : "haty";
@@ -300,6 +351,8 @@ int cmd_wizard(const char* path) {
           axis_lines.push_back(line);
       } else {
         button_lines.push_back("button." + code + " = " + p.target);
+        bool ok = false;
+        used_keys.insert(rgb::evdev_code_from_name(code, ok));
       }
     } else {
       std::printf("(timed out, skipped)\n");
