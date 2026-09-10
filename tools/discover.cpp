@@ -195,8 +195,12 @@ bool any_key_down(int fd) {
 // declares the pad settled. The next prompt then starts with the stick already deflected,
 // and the release back to center is a full-span excursion that satisfies it instantly.
 // One physical movement could answer three consecutive prompts.
-bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral, int timeout_ms,
-                  std::string& blocker) {
+// `observed` names axes we have actually received events from. An axis that has never
+// reported reads 0 from EVIOCGABS regardless of where it physically sits, so demanding it
+// be "at rest" would block forever on a value that means nothing. We can only hold an axis
+// to its neutral once it has proven it reports at all.
+bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral,
+                   const std::set<uint16_t>& observed, int timeout_ms, std::string& blocker) {
   int waited = 0;
   const int kSlice = 100;
   blocker.clear();
@@ -210,6 +214,7 @@ bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral, int timeo
     }
     if (at_rest) {
       for (const auto& [code, a] : neutral) {
+        if (!a.confirmed && !observed.count(code)) continue;
         input_absinfo info{};
         if (ioctl(fd, EVIOCGABS(code), &info) != 0) continue;
         if (std::abs(info.value - a.neutral) > a.span / 8) {
@@ -230,8 +235,8 @@ bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral, int timeo
 // `exclude` holds codes already bound to an earlier target. Without it, the residual
 // motion of a stick that has just answered one prompt happily answers the next.
 bool capture_axis(int fd, const std::map<uint16_t, AbsInfo>& neutral,
-                  const std::set<uint16_t>& exclude, std::string& code_name, bool& invert,
-                  int timeout_ms) {
+                  const std::set<uint16_t>& exclude, std::set<uint16_t>& observed,
+                  std::string& code_name, bool& invert, int timeout_ms) {
   std::map<uint16_t, int32_t> extreme;
   for (const auto& [code, a] : neutral) extreme[code] = a.neutral;
 
@@ -248,6 +253,7 @@ bool capture_axis(int fd, const std::map<uint16_t, AbsInfo>& neutral,
       if (e.type != EV_ABS) continue;
       auto it = neutral.find(e.code);
       if (it == neutral.end()) continue;
+      observed.insert(e.code);   // it reports; from now on we can hold it to its neutral
       if (exclude.count(e.code)) continue;
 
       const int32_t base = it->second.neutral;
@@ -352,19 +358,19 @@ int cmd_wizard(const char* path) {
   };
 
   std::vector<std::string> axis_lines, button_lines;
-  std::set<uint16_t> used_axes, used_keys;
+  std::set<uint16_t> used_axes, used_keys, observed_axes;
 
   for (const auto& p : axis_prompts) {
     std::printf("  [%-6s] %-44s ... ", p.target, p.instruction);
     std::fflush(stdout);
     std::string blocker;
-    if (!wait_for_rest(fd, neutral, 5000, blocker))
+    if (!wait_for_rest(fd, neutral, observed_axes, 5000, blocker))
       std::printf("(not at rest: %s) ", blocker.empty() ? "unknown" : blocker.c_str());
     drain(fd);
 
     std::string code;
     bool invert = false;
-    if (capture_axis(fd, neutral, used_axes, code, invert, kStepTimeoutMs)) {
+    if (capture_axis(fd, neutral, used_axes, observed_axes, code, invert, kStepTimeoutMs)) {
       // "Fully right" and "fully down" are both the POSITIVE direction in our convention
       // (+X right, +Y down), so a negative excursion means the device disagrees with us.
       std::printf("%s%s\n", invert ? "-" : "", code.c_str());
@@ -381,7 +387,7 @@ int cmd_wizard(const char* path) {
     std::printf("  [%-6s] %-44s ... ", p.target, p.instruction);
     std::fflush(stdout);
     std::string blocker;
-    wait_for_rest(fd, neutral, 5000, blocker);
+    wait_for_rest(fd, neutral, observed_axes, 5000, blocker);
     drain(fd);
 
     std::string code;
