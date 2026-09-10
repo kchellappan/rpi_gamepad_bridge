@@ -116,8 +116,11 @@ struct ButtonPrompt {
 constexpr int kStepTimeoutMs = 8000;
 
 struct AbsInfo {
-  int32_t neutral = 0;   // resting value, sampled once while the pad is untouched
+  int32_t neutral = 0;   // resting value
   int32_t span = 1;
+  int32_t lo = 0, hi = 0;
+  // False when the resting value is a guess rather than a reading. See sample_neutral().
+  bool confirmed = false;
 };
 
 // Read whatever is already queued and throw it away. Requires a non-blocking fd: on a
@@ -135,6 +138,18 @@ bool wait_readable(int fd, int timeout_ms) {
   return n > 0 && (p.revents & POLLIN);
 }
 
+// Sample each axis's resting position -- and decide whether the sample can be believed.
+//
+// EVIOCGABS returns whatever the kernel last recorded for the axis, which for a device
+// that has not reported since its node was opened is simply zero. On the Stadia controller
+// that is exactly what happens: the sticks declare min=1, max=255 and report value=0. A
+// value below the axis's own minimum cannot be a real reading, and that is the tell.
+//
+// Believing it is quietly destructive. The sticks actually rest near 128, so a neutral of
+// 0 means they never come back "to rest", every subsequent prompt burns its full
+// rest-wait timeout, and the user's input lands during the wait and is drained. Where the
+// reading is impossible we fall back to the midpoint and mark the axis unconfirmed, so
+// nothing blocks on a guess until we have seen the axis actually move.
 std::map<uint16_t, AbsInfo> sample_neutral(int fd) {
   std::map<uint16_t, AbsInfo> out;
   unsigned long absbits[ABS_MAX / (8 * sizeof(long)) + 1] = {0};
@@ -144,12 +159,34 @@ std::map<uint16_t, AbsInfo> sample_neutral(int fd) {
     input_absinfo info{};
     if (ioctl(fd, EVIOCGABS(c), &info) != 0) continue;
     AbsInfo a;
-    a.neutral = info.value;
+    a.lo = info.minimum;
+    a.hi = info.maximum;
     a.span = std::max(info.maximum - info.minimum, 1);
+    if (info.value >= info.minimum && info.value <= info.maximum) {
+      a.neutral = info.value;
+      a.confirmed = true;
+    } else {
+      a.neutral = info.minimum + a.span / 2;
+      a.confirmed = false;
+    }
     out[static_cast<uint16_t>(c)] = a;
   }
   return out;
 }
+
+// Once an axis has actually moved, its post-release value is a real reading, so adopt it
+// as the neutral and start enforcing rest against it.
+void confirm_axis(int fd, std::map<uint16_t, AbsInfo>& neutral, uint16_t code) {
+  auto it = neutral.find(code);
+  if (it == neutral.end()) return;
+  input_absinfo info{};
+  if (ioctl(fd, EVIOCGABS(code), &info) != 0) return;
+  if (info.value < info.minimum || info.value > info.maximum) return;
+  it->second.neutral = info.value;
+  it->second.confirmed = true;
+}
+
+std::string rgb_abs_label(uint16_t code) { return gpb::evdev_abs_name(code); }
 
 bool any_key_down(int fd) {
   unsigned long keys[KEY_MAX / (8 * sizeof(long)) + 1] = {0};
@@ -167,18 +204,29 @@ bool any_key_down(int fd) {
 // declares the pad settled. The next prompt then starts with the stick already deflected,
 // and the release back to center is a full-span excursion that satisfies it instantly.
 // One physical movement could answer three consecutive prompts.
-bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral, int timeout_ms) {
+bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral, int timeout_ms,
+                  std::string& blocker) {
   int waited = 0;
   const int kSlice = 100;
+  blocker.clear();
   while (waited < timeout_ms) {
     drain(fd);
-    bool at_rest = !any_key_down(fd);
+    bool at_rest = true;
+    blocker.clear();
+    if (any_key_down(fd)) {
+      at_rest = false;
+      blocker = "a button is held";
+    }
     if (at_rest) {
       for (const auto& [code, a] : neutral) {
+        // Never block on an axis whose resting value we only guessed at.
+        if (!a.confirmed) continue;
         input_absinfo info{};
         if (ioctl(fd, EVIOCGABS(code), &info) != 0) continue;
         if (std::abs(info.value - a.neutral) > a.span / 8) {
           at_rest = false;
+          blocker = rgb_abs_label(code) + "=" + std::to_string(info.value) + " vs " +
+                    std::to_string(a.neutral);
           break;
         }
       }
@@ -273,8 +321,13 @@ int cmd_wizard(const char* path) {
   std::fflush(stdout);
   usleep(1200000);
   drain(fd);
-  const auto neutral = sample_neutral(fd);
-  std::printf("%zu axes\n", neutral.size());
+  auto neutral = sample_neutral(fd);
+  size_t guessed = 0;
+  for (const auto& [_, a] : neutral)
+    if (!a.confirmed) ++guessed;
+  std::printf("%zu axes", neutral.size());
+  if (guessed) std::printf(" (%zu report no usable resting value; midpoint assumed)", guessed);
+  std::printf("\n");
 
   std::printf(
       "\nFollow the prompts, releasing fully between steps. Each step times out\n"
@@ -315,8 +368,9 @@ int cmd_wizard(const char* path) {
   for (const auto& p : axis_prompts) {
     std::printf("  [%-6s] %-44s ... ", p.target, p.instruction);
     std::fflush(stdout);
-    if (!wait_for_rest(fd, neutral, 5000))
-      std::printf("(still not at rest) ");
+    std::string blocker;
+    if (!wait_for_rest(fd, neutral, 5000, blocker))
+      std::printf("(not at rest: %s) ", blocker.empty() ? "unknown" : blocker.c_str());
     drain(fd);
 
     std::string code;
@@ -327,7 +381,12 @@ int cmd_wizard(const char* path) {
       std::printf("%s%s\n", invert ? "-" : "", code.c_str());
       axis_lines.push_back("axis." + code + " = " + (invert ? "-" : "") + p.target);
       bool ok = false;
-      used_axes.insert(gpb::evdev_code_from_name(code, ok));
+      const uint16_t bound = gpb::evdev_code_from_name(code, ok);
+      used_axes.insert(bound);
+      // Let the axis come back to rest, then adopt that as its true neutral.
+      std::string ignored;
+      wait_for_rest(fd, neutral, 2000, ignored);
+      confirm_axis(fd, neutral, bound);
     } else {
       std::printf("(timed out, skipped)\n");
     }
@@ -337,7 +396,8 @@ int cmd_wizard(const char* path) {
   for (const auto& p : button_prompts) {
     std::printf("  [%-6s] %-44s ... ", p.target, p.instruction);
     std::fflush(stdout);
-    wait_for_rest(fd, neutral, 5000);
+    std::string blocker;
+    wait_for_rest(fd, neutral, 5000, blocker);
     drain(fd);
 
     std::string code;

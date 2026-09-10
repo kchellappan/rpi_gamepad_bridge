@@ -116,6 +116,7 @@ int create_device() {
 // prompts in a row.
 int g_hold_us = 250000;
 int g_gap_us = 1500000;
+bool g_park_axes = true;
 
 void axis_pulse(int fd, uint16_t code, int32_t to, int32_t rest) {
   emit(fd, EV_ABS, code, to);
@@ -192,12 +193,18 @@ int run_wizard_script(int fd, int lead_in_ms) {
 
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "";
-  if (mode != "--hold" && mode != "--wizard-script" && mode != "--wizard-script-sloppy") {
+  if (mode != "--hold" && mode != "--wizard-script" && mode != "--wizard-script-sloppy" &&
+      mode != "--wizard-script-cold") {
     std::fprintf(stderr,
                  "usage: %s [--hold | --wizard-script [lead_in_ms] | "
-                 "--wizard-script-sloppy [lead_in_ms]]\n",
+                 "--wizard-script-sloppy [lead_in_ms] | --wizard-script-cold [lead_in_ms]]\n",
                  argv[0]);
     return 2;
+  }
+  if (mode == "--wizard-script-cold") {
+    g_park_axes = false;   // leave absinfo uninitialized, as a real Stadia does
+    g_hold_us = 1400000;
+    g_gap_us = 4500000;
   }
   if (mode == "--wizard-script-sloppy") {
     g_hold_us = 1400000;   // release lands inside the NEXT prompt's window
@@ -211,14 +218,19 @@ int main(int argc, char** argv) {
   usleep(400000);
 
   // Park every axis at its true resting position. uinput starts them at 0, but the sticks
-  // rest at 128, so a reader sampling the neutral before any movement would record 0 and
-  // then never see the pad return to "rest" again. A real controller reports its actual
-  // center; the fixture has to as well, or it manufactures failures that the hardware
-  // would never produce.
-  for (int c : kAbsCodes) emit(fd, EV_ABS, c, (c == ABS_GAS || c == ABS_BRAKE) ? 0 : 128);
-  for (int c : kHatCodes) emit(fd, EV_ABS, c, 0);
-  sync(fd);
-  usleep(200000);
+  // declare min=1 and rest at 128, so until a report arrives EVIOCGABS returns a value
+  // below the axis minimum -- which is not a reading at all.
+  //
+  // --cold skips this deliberately, reproducing exactly what a real Stadia controller
+  // presents when it has not reported since its node was opened. Any consumer that
+  // believes that zero will conclude the sticks rest at 0 and then wait forever for them
+  // to "return" there.
+  if (g_park_axes) {
+    for (int c : kAbsCodes) emit(fd, EV_ABS, c, (c == ABS_GAS || c == ABS_BRAKE) ? 0 : 128);
+    for (int c : kHatCodes) emit(fd, EV_ABS, c, 0);
+    sync(fd);
+    usleep(200000);
+  }
   const std::string node = find_own_node();
   std::printf("created virtual pad \"gpb-fakepad\" at %s\n",
               node.empty() ? "(node not found)" : node.c_str());
