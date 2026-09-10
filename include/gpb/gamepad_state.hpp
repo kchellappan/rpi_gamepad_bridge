@@ -9,7 +9,7 @@
 
 #include <cstdint>
 
-namespace rgb {
+namespace gpb {
 
 // Button bits. Deliberately named by PHYSICAL POSITION, following evdev's BTN_SOUTH /
 // BTN_EAST / BTN_NORTH / BTN_WEST convention, rather than by any vendor's face labels.
@@ -50,7 +50,7 @@ struct GamepadState {
   uint16_t size    = sizeof(GamepadState);
 
   uint32_t seq = 0;         // monotonically increasing, per-source
-  uint32_t buttons = 0;     // rgb::btn bitfield
+  uint32_t buttons = 0;     // gpb::btn bitfield
 
   // Kernel's timestamp for the originating event (CLOCK_MONOTONIC; see EVIOCSCLOCKID in
   // EvdevSource). This is as close to the hardware event as userspace can get.
@@ -85,4 +85,4 @@ struct GamepadState {
 static_assert(sizeof(GamepadState) == 48, "wire format changed; bump kWireVersion");
 static_assert(alignof(GamepadState) == 8, "unexpected alignment for a wire struct");
 
-}  // namespace rgb
+}  // namespace gpb

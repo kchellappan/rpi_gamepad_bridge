@@ -1,4 +1,4 @@
-#include "rgb/sinks/ns_hid_sink.hpp"
+#include "gpb/sinks/ns_hid_sink.hpp"
 
 #include <fcntl.h>
 #include <cstring>
@@ -8,7 +8,7 @@
 #include <cerrno>
 #include <cstdio>
 
-namespace rgb {
+namespace gpb {
 namespace {
 
 // Pokken byte 0: bit0 Y, bit1 B, bit2 A, bit3 X, bit4 L, bit5 R, bit6 ZL, bit7 ZR
@@ -178,4 +178,4 @@ void NsHidSink::shutdown() {
   }
 }
 
-}  // namespace rgb
+}  // namespace gpb

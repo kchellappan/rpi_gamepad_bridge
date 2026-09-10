@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <string>
 
-namespace rgb {
+namespace gpb {
 
 void lock_memory();                       // mlockall, so we never page-fault mid-loop
 bool set_realtime_priority(int prio);     // SCHED_FIFO
@@ -16,4 +16,4 @@ bool pin_to_cpu(int cpu);
 uint64_t now_mono_ns();
 uint64_t now_real_ns();
 
-}  // namespace rgb
+}  // namespace gpb

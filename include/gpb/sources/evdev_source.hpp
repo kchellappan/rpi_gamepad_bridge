@@ -12,10 +12,10 @@
 #include <map>
 #include <string>
 #include <vector>
-#include "rgb/config.hpp"
-#include "rgb/input_source.hpp"
+#include "gpb/config.hpp"
+#include "gpb/input_source.hpp"
 
-namespace rgb {
+namespace gpb {
 
 // Which normalized field an evdev code feeds.
 enum class AxisTarget : uint8_t { kNone, kLX, kLY, kRX, kRY, kLT, kRT, kHatX, kHatY };
@@ -47,7 +47,7 @@ class EvdevSource final : public InputSource {
   int fd_ = -1;
 
   std::map<uint16_t, AxisBinding> axes_;   // ABS_* code -> binding
-  std::map<uint16_t, uint32_t> buttons_;   // BTN_/KEY_ code -> rgb::btn mask
+  std::map<uint16_t, uint32_t> buttons_;   // BTN_/KEY_ code -> gpb::btn mask
 
   GamepadState acc_{};   // accumulator; only published on SYN_REPORT
   int32_t hat_x_ = 0, hat_y_ = 0;
@@ -61,4 +61,4 @@ uint16_t evdev_code_from_name(const std::string& name, bool& ok);
 std::string evdev_abs_name(uint16_t code);
 std::string evdev_key_name(uint16_t code);
 
-}  // namespace rgb
+}  // namespace gpb

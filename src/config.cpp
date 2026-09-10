@@ -1,10 +1,10 @@
-#include "rgb/config.hpp"
+#include "gpb/config.hpp"
 
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 
-namespace rgb {
+namespace gpb {
 namespace {
 
 std::string trim(const std::string& s) {
@@ -79,4 +79,4 @@ bool Config::get_bool(const std::string& key, bool def) const {
   return v == "1" || v == "true" || v == "yes" || v == "on";
 }
 
-}  // namespace rgb
+}  // namespace gpb

@@ -15,9 +15,9 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include "rgb/gamepad_state.hpp"
+#include "gpb/gamepad_state.hpp"
 
-namespace rgb {
+namespace gpb {
 
 class Recorder {
  public:
@@ -43,4 +43,4 @@ class Recorder {
   std::FILE* file_ = nullptr;
 };
 
-}  // namespace rgb
+}  // namespace gpb

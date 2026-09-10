@@ -1,4 +1,4 @@
-#include "rgb/sources/socket_source.hpp"
+#include "gpb/sources/socket_source.hpp"
 
 #include <fcntl.h>
 #include <cstring>
@@ -8,12 +8,12 @@
 
 #include <cerrno>
 #include <cstdio>
-#include "rgb/rt.hpp"
+#include "gpb/rt.hpp"
 
-namespace rgb {
+namespace gpb {
 
 SocketSource::SocketSource(const Config& cfg) {
-  path_ = cfg.get("source.socket.path", "/run/rgb-bridge.sock");
+  path_ = cfg.get("source.socket.path", "/run/gpbridge.sock");
 }
 
 SocketSource::~SocketSource() { shutdown(); }
@@ -102,4 +102,4 @@ void SocketSource::shutdown() {
   if (listen_ >= 0) { ::close(listen_); listen_ = -1; ::unlink(path_.c_str()); }
 }
 
-}  // namespace rgb
+}  // namespace gpb

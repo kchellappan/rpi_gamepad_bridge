@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build rgb-bridge and rgb-discover. Needs no root and no libraries.
+# Build gpbridge and gpb-discover. Needs no root and no libraries.
 #
 # Prefers cmake, but falls back to calling g++ directly so that a bare image with only a
 # compiler can still build this. That fallback is not a nicety: it is what let this build
@@ -27,15 +27,15 @@ else
   command -v g++ >/dev/null || { echo "no g++ either -- run scripts/install_deps.sh" >&2; exit 1; }
   mkdir -p "$BUILD_DIR"
   FLAGS=(-std=c++20 -O2 -g -Wall -Wextra -Wpedantic -Iinclude)
-  echo "    rgb-bridge"
-  g++ "${FLAGS[@]}" "${CORE_SRC[@]}" src/main.cpp     -o "$BUILD_DIR/rgb-bridge"   -lpthread
-  echo "    rgb-discover"
-  g++ "${FLAGS[@]}" "${CORE_SRC[@]}" tools/discover.cpp -o "$BUILD_DIR/rgb-discover" -lpthread
-  echo "    rgb-fakepad"
-  g++ "${FLAGS[@]}" tools/fake_pad.cpp -o "$BUILD_DIR/rgb-fakepad"
+  echo "    gpbridge"
+  g++ "${FLAGS[@]}" "${CORE_SRC[@]}" src/main.cpp     -o "$BUILD_DIR/gpbridge"   -lpthread
+  echo "    gpb-discover"
+  g++ "${FLAGS[@]}" "${CORE_SRC[@]}" tools/discover.cpp -o "$BUILD_DIR/gpb-discover" -lpthread
+  echo "    gpb-fakepad"
+  g++ "${FLAGS[@]}" tools/fake_pad.cpp -o "$BUILD_DIR/gpb-fakepad"
 fi
 
 echo
-ls -la "$BUILD_DIR"/rgb-bridge "$BUILD_DIR"/rgb-discover "$BUILD_DIR"/rgb-fakepad
+ls -la "$BUILD_DIR"/gpbridge "$BUILD_DIR"/gpb-discover "$BUILD_DIR"/gpb-fakepad
 echo
-echo "next: ./$BUILD_DIR/rgb-discover list"
+echo "next: ./$BUILD_DIR/gpb-discover list"

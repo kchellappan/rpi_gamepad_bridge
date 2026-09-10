@@ -180,7 +180,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4
 ```
 
-Produces `build/rgb-bridge` and `build/rgb-discover`.
+Produces `build/gpbridge` and `build/gpb-discover`.
 
 ## Bringing it up on the Pi
 
@@ -198,17 +198,17 @@ sudo ./scripts/gadget_up.sh
 cat /sys/class/udc/*/current_speed        # want "high-speed" -- see note below
 
 # 3. learn the controller's real mapping, and paste the result into the config
-./build/rgb-discover list
-sudo ./build/rgb-discover wizard /dev/input/by-id/usb-Google_LLC_Stadia_Controller...
+./build/gpb-discover list
+sudo ./build/gpb-discover wizard /dev/input/by-id/usb-Google_LLC_Stadia_Controller...
 
 # 4. run
-sudo ./build/rgb-bridge --config config/stadia_to_switch.ini
+sudo ./build/gpbridge --config config/stadia_to_switch.ini
 
 # capture a session for training data
-sudo ./build/rgb-bridge --config config/stadia_to_switch.ini --record session.bin
+sudo ./build/gpbridge --config config/stadia_to_switch.ini --record session.bin
 
 # replay it, or drive from a policy, over the socket
-sudo ./build/rgb-bridge --config config/stadia_to_switch.ini --source socket
+sudo ./build/gpbridge --config config/stadia_to_switch.ini --source socket
 ```
 
 ### If `gadget_up.sh` says "no UDC found"
@@ -240,7 +240,7 @@ not anything in this codebase -- is the latency problem worth chasing.
 ## Project layout
 
 ```
-include/rgb/          public headers, one per concept
+include/gpb/          public headers, one per concept
   gamepad_state.hpp     the normalized POD struct; also the wire and capture format
   input_source.hpp      abstract source
   output_sink.hpp       abstract sink, with the separate initialize() phase
@@ -248,7 +248,7 @@ include/rgb/          public headers, one per concept
   bridge.hpp            composition root and event loop
 src/sources/          EvdevSource (all physical pads), SocketSource (programmatic)
 src/sinks/            NsHidSink (Switch, via the Pokken descriptor)
-tools/discover.cpp    rgb-discover: list / caps / wizard
+tools/discover.cpp    gpb-discover: list / caps / wizard
 scripts/              gadget_up.sh, gadget_down.sh
 config/               stadia_to_switch.ini
 ```
@@ -274,18 +274,18 @@ Verified on the target hardware (Pi 5 Model B Rev 1.0, Debian 13, kernel 6.18.34
   we wanted, and confirms there is nothing to tune in the descriptor.
 - The gadget enumerates: `/dev/hidg0` is created, and the 76-byte report descriptor reads
   back byte-identical to the one written.
-- `rgb-discover` identifies the Stadia controller and its capabilities. The axis layout is
+- `gpb-discover` identifies the Stadia controller and its capabilities. The axis layout is
   confirmed: sticks on `ABS_X`/`ABS_Y` and `ABS_Z`/`ABS_RZ`, triggers on
   `ABS_GAS`/`ABS_BRAKE`, d-pad on `ABS_HAT0X`/`ABS_HAT0Y`. Note the sticks report
   `min=1 max=255`, not `0..255`, which is why axis ranges are read from the kernel with
   `EVIOCGABS` rather than assumed.
-- `rgb-bridge` runs end to end against the real controller and the real gadget: binds 8
+- `gpbridge` runs end to end against the real controller and the real gadget: binds 8
   axes and 12 buttons, grabs the device, and idles cleanly with no host attached.
 
 Still unverified, because each needs a human or a console in the loop:
 
 - **Which physical face button is which.** `caps` proves `BTN_SOUTH/EAST/NORTH/WEST` all
-  exist, but not where they sit -- see the alias trap below. `rgb-discover wizard` settles
+  exist, but not where they sit -- see the alias trap below. `gpb-discover wizard` settles
   it in about a minute.
 - Whether `ABS_BRAKE` is the left trigger and `ABS_GAS` the right (the conventional
   assignment, and what the config assumes) rather than the reverse.

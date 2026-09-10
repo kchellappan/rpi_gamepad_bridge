@@ -1,4 +1,4 @@
-#include "rgb/sources/evdev_source.hpp"
+#include "gpb/sources/evdev_source.hpp"
 
 #include <fcntl.h>
 #include <cstring>
@@ -11,9 +11,9 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
-#include "rgb/rt.hpp"
+#include "gpb/rt.hpp"
 
-namespace rgb {
+namespace gpb {
 namespace {
 
 struct NamedCode {
@@ -172,7 +172,7 @@ void EvdevSource::autodetect_ranges() {
 
 bool EvdevSource::initialize(std::string& err) {
   if (path_.empty()) {
-    err = "source.evdev.device is not set (run rgb-discover to find it)";
+    err = "source.evdev.device is not set (run gpb-discover to find it)";
     return false;
   }
   fd_ = ::open(path_.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
@@ -314,4 +314,4 @@ void EvdevSource::shutdown() {
   }
 }
 
-}  // namespace rgb
+}  // namespace gpb

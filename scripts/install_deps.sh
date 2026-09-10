@@ -31,7 +31,7 @@ git --version
 # OS puts the default user in 'input' already; say so plainly if it did not.
 if ! id -nG | tr ' ' '\n' | grep -qx input; then
   echo
-  echo "NOTE: $(id -un) is not in the 'input' group, so rgb-discover will need sudo."
+  echo "NOTE: $(id -un) is not in the 'input' group, so gpb-discover will need sudo."
   echo "      To fix (takes effect on next login):  $SUDO usermod -aG input $(id -un)"
 fi
 echo

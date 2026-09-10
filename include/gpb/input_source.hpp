@@ -8,10 +8,10 @@
 // HID device we deliberately unbound from its driver -- i.e. things evdev cannot express.
 
 #include <string>
-#include "rgb/feedback.hpp"
-#include "rgb/gamepad_state.hpp"
+#include "gpb/feedback.hpp"
+#include "gpb/gamepad_state.hpp"
 
-namespace rgb {
+namespace gpb {
 
 class InputSource {
  public:
@@ -49,4 +49,4 @@ class InputSource {
   virtual const char* name() const = 0;
 };
 
-}  // namespace rgb
+}  // namespace gpb

@@ -3,10 +3,10 @@
 
 #include <chrono>
 #include <string>
-#include "rgb/feedback.hpp"
-#include "rgb/gamepad_state.hpp"
+#include "gpb/feedback.hpp"
+#include "gpb/gamepad_state.hpp"
 
-namespace rgb {
+namespace gpb {
 
 class OutputSink {
  public:
@@ -46,4 +46,4 @@ class OutputSink {
   virtual const char* name() const = 0;
 };
 
-}  // namespace rgb
+}  // namespace gpb

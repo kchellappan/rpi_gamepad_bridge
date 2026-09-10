@@ -5,11 +5,11 @@
 #include <memory>
 #include <string>
 
-#include "rgb/bridge.hpp"
-#include "rgb/factory.hpp"
+#include "gpb/bridge.hpp"
+#include "gpb/factory.hpp"
 
 namespace {
-rgb::Bridge* g_bridge = nullptr;
+gpb::Bridge* g_bridge = nullptr;
 void on_signal(int) {
   if (g_bridge) g_bridge->stop();
 }
@@ -45,40 +45,40 @@ int main(int argc, char** argv) {
   }
   if (config_path.empty()) { usage(argv[0]); return 2; }
 
-  rgb::Config cfg;
+  gpb::Config cfg;
   std::string err;
   if (!cfg.load(config_path, err)) {
     std::fprintf(stderr, "config: %s\n", err.c_str());
     return 1;
   }
 
-  rgb::register_builtin_sources();
-  rgb::register_builtin_sinks();
+  gpb::register_builtin_sources();
+  gpb::register_builtin_sinks();
 
   const std::string source_name =
       source_override.empty() ? cfg.get("bridge.source", "evdev") : source_override;
   const std::string sink_name =
       sink_override.empty() ? cfg.get("bridge.sink", "ns_hid") : sink_override;
 
-  auto src = rgb::SourceRegistry::instance().create(source_name, cfg);
+  auto src = gpb::SourceRegistry::instance().create(source_name, cfg);
   if (!src) {
     std::fprintf(stderr, "unknown source \"%s\"; available:", source_name.c_str());
-    for (const auto& n : rgb::SourceRegistry::instance().names())
+    for (const auto& n : gpb::SourceRegistry::instance().names())
       std::fprintf(stderr, " %s", n.c_str());
     std::fprintf(stderr, "\n");
     return 1;
   }
-  auto sink = rgb::SinkRegistry::instance().create(sink_name, cfg);
+  auto sink = gpb::SinkRegistry::instance().create(sink_name, cfg);
   if (!sink) {
     std::fprintf(stderr, "unknown sink \"%s\"; available:", sink_name.c_str());
-    for (const auto& n : rgb::SinkRegistry::instance().names())
+    for (const auto& n : gpb::SinkRegistry::instance().names())
       std::fprintf(stderr, " %s", n.c_str());
     std::fprintf(stderr, "\n");
     return 1;
   }
 
   // Mapping layer. Parsed once here; nothing in it reads config again at runtime.
-  rgb::StickProfile left, right;
+  gpb::StickProfile left, right;
   left.deadzone = static_cast<int16_t>(cfg.get_int("profile.left.deadzone", 2000));
   left.saturation = static_cast<int16_t>(cfg.get_int("profile.left.saturation", 32000));
   left.expo = cfg.get_float("profile.left.expo", 1.0f);
@@ -90,11 +90,11 @@ int main(int argc, char** argv) {
   right.invert_x = cfg.get_bool("profile.right.invert_x", false);
   right.invert_y = cfg.get_bool("profile.right.invert_y", false);
 
-  std::vector<std::unique_ptr<rgb::Transform>> transforms;
-  transforms.push_back(std::make_unique<rgb::ProfileTransform>(
+  std::vector<std::unique_ptr<gpb::Transform>> transforms;
+  transforms.push_back(std::make_unique<gpb::ProfileTransform>(
       left, right, static_cast<uint8_t>(cfg.get_int("profile.trigger_deadzone", 12))));
 
-  rgb::BridgeOptions opts;
+  gpb::BridgeOptions opts;
   opts.rumble = cfg.get_bool("bridge.rumble", false);
   opts.record_path = record_override.empty() ? cfg.get("bridge.record_path") : record_override;
   opts.record = !opts.record_path.empty();
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
   opts.rt_priority = cfg.get_int("bridge.rt_priority", 0);
   opts.cpu_affinity = cfg.get_int("bridge.cpu_affinity", -1);
 
-  rgb::Bridge bridge(std::move(src), std::move(sink), std::move(transforms), opts);
+  gpb::Bridge bridge(std::move(src), std::move(sink), std::move(transforms), opts);
   if (!bridge.initialize(err)) {
     std::fprintf(stderr, "init failed: %s\n", err.c_str());
     return 1;

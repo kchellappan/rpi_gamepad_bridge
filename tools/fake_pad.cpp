@@ -1,4 +1,4 @@
-// rgb-fakepad -- a synthetic gamepad, created through uinput.
+// gpb-fakepad -- a synthetic gamepad, created through uinput.
 //
 // Exists so the evdev path can be exercised without a human and without hardware: the
 // wizard, the bridge, and the mapping config can all be driven end to end in CI or on a
@@ -6,8 +6,8 @@
 // first prompt, which no amount of reading the code had caught but a scripted pad would
 // have found immediately.
 //
-//   rgb-fakepad --hold             create the device and idle (drive it yourself)
-//   rgb-fakepad --wizard-script    emit the exact sequence rgb-discover wizard prompts for
+//   gpb-fakepad --hold             create the device and idle (drive it yourself)
+//   gpb-fakepad --wizard-script    emit the exact sequence gpb-discover wizard prompts for
 //
 // Needs write access to /dev/uinput, so in practice: sudo.
 
@@ -48,7 +48,7 @@ std::string find_own_node() {
     if (fd < 0) continue;
     char buf[256] = {0};
     if (ioctl(fd, EVIOCGNAME(sizeof(buf) - 1), buf) >= 0 &&
-        std::strcmp(buf, "rgb-fakepad") == 0) {
+        std::strcmp(buf, "gpb-fakepad") == 0) {
       found = path;
     }
     ::close(fd);
@@ -83,7 +83,7 @@ int create_device() {
   for (int c : kHatCodes) ioctl(fd, UI_SET_ABSBIT, c);
 
   uinput_user_dev dev{};
-  std::snprintf(dev.name, UINPUT_MAX_NAME_SIZE, "rgb-fakepad");
+  std::snprintf(dev.name, UINPUT_MAX_NAME_SIZE, "gpb-fakepad");
   dev.id.bustype = BUS_USB;
   dev.id.vendor = 0x1209;   // pid.codes, the free VID for open hardware
   dev.id.product = 0x0001;
@@ -134,7 +134,7 @@ void button_pulse(int fd, uint16_t code) {
 }
 
 int run_wizard_script(int fd, int lead_in_ms) {
-  // Order must match rgb-discover wizard's prompts exactly.
+  // Order must match gpb-discover wizard's prompts exactly.
   //
   // This script is open-loop: it cannot see the wizard, so the gap must exceed the
   // wizard's worst-case per-step overhead (waiting for the pad to return to rest). A human
@@ -209,8 +209,18 @@ int main(int argc, char** argv) {
   if (fd < 0) return 1;
   // udev needs a moment to publish the node before anyone can open it.
   usleep(400000);
+
+  // Park every axis at its true resting position. uinput starts them at 0, but the sticks
+  // rest at 128, so a reader sampling the neutral before any movement would record 0 and
+  // then never see the pad return to "rest" again. A real controller reports its actual
+  // center; the fixture has to as well, or it manufactures failures that the hardware
+  // would never produce.
+  for (int c : kAbsCodes) emit(fd, EV_ABS, c, (c == ABS_GAS || c == ABS_BRAKE) ? 0 : 128);
+  for (int c : kHatCodes) emit(fd, EV_ABS, c, 0);
+  sync(fd);
+  usleep(200000);
   const std::string node = find_own_node();
-  std::printf("created virtual pad \"rgb-fakepad\" at %s\n",
+  std::printf("created virtual pad \"gpb-fakepad\" at %s\n",
               node.empty() ? "(node not found)" : node.c_str());
   std::fflush(stdout);
 

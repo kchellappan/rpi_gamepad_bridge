@@ -9,12 +9,12 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "rgb/input_source.hpp"
-#include "rgb/output_sink.hpp"
-#include "rgb/recorder.hpp"
-#include "rgb/transform.hpp"
+#include "gpb/input_source.hpp"
+#include "gpb/output_sink.hpp"
+#include "gpb/recorder.hpp"
+#include "gpb/transform.hpp"
 
-namespace rgb {
+namespace gpb {
 
 struct BridgeOptions {
   bool rumble = false;          // reverse channel, off by default
@@ -61,4 +61,4 @@ class Bridge {
   int timerfd_ = -1;
 };
 
-}  // namespace rgb
+}  // namespace gpb

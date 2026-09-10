@@ -13,9 +13,9 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "rgb/gamepad_state.hpp"
+#include "gpb/gamepad_state.hpp"
 
-namespace rgb {
+namespace gpb {
 
 class Transform {
  public:
@@ -46,4 +46,4 @@ class ProfileTransform final : public Transform {
   uint8_t trigger_deadzone_;
 };
 
-}  // namespace rgb
+}  // namespace gpb

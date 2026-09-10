@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-namespace rgb {
+namespace gpb {
 
 enum class FeedbackKind : uint8_t {
   kNone = 0,
@@ -23,4 +23,4 @@ struct FeedbackEvent {
   uint32_t duration_ms = 0;
 };
 
-}  // namespace rgb
+}  // namespace gpb

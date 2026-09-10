@@ -10,10 +10,10 @@
 
 #include <chrono>
 #include <string>
-#include "rgb/config.hpp"
-#include "rgb/output_sink.hpp"
+#include "gpb/config.hpp"
+#include "gpb/output_sink.hpp"
 
-namespace rgb {
+namespace gpb {
 
 #pragma pack(push, 1)
 struct PokkenReport {
@@ -57,4 +57,4 @@ class NsHidSink final : public OutputSink {
   std::chrono::nanoseconds cadence_{0};
 };
 
-}  // namespace rgb
+}  // namespace gpb

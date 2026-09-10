@@ -1,10 +1,10 @@
-#include "rgb/factory.hpp"
+#include "gpb/factory.hpp"
 
-#include "rgb/sinks/ns_hid_sink.hpp"
-#include "rgb/sources/evdev_source.hpp"
-#include "rgb/sources/socket_source.hpp"
+#include "gpb/sinks/ns_hid_sink.hpp"
+#include "gpb/sources/evdev_source.hpp"
+#include "gpb/sources/socket_source.hpp"
 
-namespace rgb {
+namespace gpb {
 
 void register_builtin_sources() {
   SourceRegistry::instance().add("evdev", [](const Config& c) {
@@ -21,4 +21,4 @@ void register_builtin_sinks() {
   });
 }
 
-}  // namespace rgb
+}  // namespace gpb

@@ -1,4 +1,4 @@
-#include "rgb/bridge.hpp"
+#include "gpb/bridge.hpp"
 
 #include <cstring>
 #include <sys/epoll.h>
@@ -7,9 +7,9 @@
 
 #include <cerrno>
 #include <cstdio>
-#include "rgb/rt.hpp"
+#include "gpb/rt.hpp"
 
-namespace rgb {
+namespace gpb {
 
 Bridge::Bridge(std::unique_ptr<InputSource> src, std::unique_ptr<OutputSink> sink,
                std::vector<std::unique_ptr<Transform>> transforms, BridgeOptions opts)
@@ -179,4 +179,4 @@ int Bridge::run() {
   return 0;
 }
 
-}  // namespace rgb
+}  // namespace gpb

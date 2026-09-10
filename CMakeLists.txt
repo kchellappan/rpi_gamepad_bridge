@@ -14,7 +14,7 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 # justify relaxing FP semantics on a value that ends up quantized to 8 bits anyway.
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g")
 
-add_library(rgb_core STATIC
+add_library(gpb_core STATIC
   src/config.cpp
   src/rt.cpp
   src/transform.cpp
@@ -25,17 +25,17 @@ add_library(rgb_core STATIC
   src/sources/socket_source.cpp
   src/sinks/ns_hid_sink.cpp
 )
-target_include_directories(rgb_core PUBLIC include)
+target_include_directories(gpb_core PUBLIC include)
 find_package(Threads REQUIRED)
-target_link_libraries(rgb_core PUBLIC Threads::Threads)
+target_link_libraries(gpb_core PUBLIC Threads::Threads)
 
-add_executable(rgb-bridge src/main.cpp)
-target_link_libraries(rgb-bridge PRIVATE rgb_core)
+add_executable(gpbridge src/main.cpp)
+target_link_libraries(gpbridge PRIVATE gpb_core)
 
-add_executable(rgb-discover tools/discover.cpp)
-target_link_libraries(rgb-discover PRIVATE rgb_core)
+add_executable(gpb-discover tools/discover.cpp)
+target_link_libraries(gpb-discover PRIVATE gpb_core)
 
 # Synthetic gamepad for testing the evdev path without hardware or a human.
-add_executable(rgb-fakepad tools/fake_pad.cpp)
+add_executable(gpb-fakepad tools/fake_pad.cpp)
 
-install(TARGETS rgb-bridge rgb-discover rgb-fakepad RUNTIME DESTINATION bin)
+install(TARGETS gpbridge gpb-discover gpb-fakepad RUNTIME DESTINATION bin)

@@ -11,11 +11,11 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "rgb/config.hpp"
-#include "rgb/input_source.hpp"
-#include "rgb/output_sink.hpp"
+#include "gpb/config.hpp"
+#include "gpb/input_source.hpp"
+#include "gpb/output_sink.hpp"
 
-namespace rgb {
+namespace gpb {
 
 template <typename Base>
 class Registry {
@@ -51,4 +51,4 @@ using SinkRegistry = Registry<OutputSink>;
 void register_builtin_sources();
 void register_builtin_sinks();
 
-}  // namespace rgb
+}  // namespace gpb

@@ -9,7 +9,7 @@
 #include <map>
 #include <string>
 
-namespace rgb {
+namespace gpb {
 
 class Config {
  public:
@@ -28,4 +28,4 @@ class Config {
   std::map<std::string, std::string> kv_;
 };
 
-}  // namespace rgb
+}  // namespace gpb

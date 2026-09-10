@@ -1,4 +1,4 @@
-#include "rgb/rt.hpp"
+#include "gpb/rt.hpp"
 
 #include <pthread.h>
 #include <sched.h>
@@ -7,7 +7,7 @@
 
 #include <cstdio>
 
-namespace rgb {
+namespace gpb {
 
 void lock_memory() {
   if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
@@ -50,4 +50,4 @@ uint64_t now_real_ns() {
   return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + ts.tv_nsec;
 }
 
-}  // namespace rgb
+}  // namespace gpb

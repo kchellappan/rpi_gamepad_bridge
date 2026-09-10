@@ -13,10 +13,10 @@
 // directions no longer agree, which is exactly what the VLA use case cannot tolerate.)
 
 #include <string>
-#include "rgb/config.hpp"
-#include "rgb/input_source.hpp"
+#include "gpb/config.hpp"
+#include "gpb/input_source.hpp"
 
-namespace rgb {
+namespace gpb {
 
 class SocketSource final : public InputSource {
  public:
@@ -41,4 +41,4 @@ class SocketSource final : public InputSource {
   uint32_t seq_ = 0;
 };
 
-}  // namespace rgb
+}  // namespace gpb

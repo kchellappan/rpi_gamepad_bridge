@@ -3,7 +3,7 @@
 # config, then remove directories bottom-up, or configfs refuses with EBUSY.
 set -euo pipefail
 
-GADGET_NAME="${GADGET_NAME:-rgbpad}"
+GADGET_NAME="${GADGET_NAME:-gpbpad}"
 G="/sys/kernel/config/usb_gadget/${GADGET_NAME}"
 
 if [[ $EUID -ne 0 ]]; then echo "must run as root" >&2; exit 1; fi

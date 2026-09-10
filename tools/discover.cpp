@@ -1,4 +1,4 @@
-// rgb-discover -- find a controller and learn its evdev mapping on the device itself.
+// gpb-discover -- find a controller and learn its evdev mapping on the device itself.
 //
 // Exists because guessing at a controller's axis and button codes is exactly the kind of
 // per-device fact that should be measured rather than assumed. Controllers disagree about
@@ -6,9 +6,9 @@
 // ABS_Z/ABS_RZ, and where "Assistant"/"Capture" style extra buttons land. Rather than ship
 // a guess, ship the thing that produces the answer.
 //
-//   rgb-discover list             enumerate input devices
-//   rgb-discover caps  <dev>      dump one device's axes and buttons
-//   rgb-discover wizard <dev>     interactive: emits a pasteable config stanza
+//   gpb-discover list             enumerate input devices
+//   gpb-discover caps  <dev>      dump one device's axes and buttons
+//   gpb-discover wizard <dev>     interactive: emits a pasteable config stanza
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -27,7 +27,7 @@
 #include <string>
 #include <vector>
 
-#include "rgb/sources/evdev_source.hpp"
+#include "gpb/sources/evdev_source.hpp"
 
 namespace {
 
@@ -88,7 +88,7 @@ int cmd_caps(const char* path) {
     input_absinfo info{};
     ioctl(fd, EVIOCGABS(c), &info);
     std::printf("  %-14s min=%-7d max=%-7d flat=%-5d value=%d\n",
-                rgb::evdev_abs_name(static_cast<uint16_t>(c)).c_str(), info.minimum,
+                gpb::evdev_abs_name(static_cast<uint16_t>(c)).c_str(), info.minimum,
                 info.maximum, info.flat, info.value);
   }
 
@@ -97,7 +97,7 @@ int cmd_caps(const char* path) {
   std::printf("\nbuttons:\n");
   for (int c = 0; c <= KEY_MAX; ++c)
     if (bit_set(keybits, c))
-      std::printf("  %s\n", rgb::evdev_key_name(static_cast<uint16_t>(c)).c_str());
+      std::printf("  %s\n", gpb::evdev_key_name(static_cast<uint16_t>(c)).c_str());
   close(fd);
   return 0;
 }
@@ -220,7 +220,7 @@ bool capture_axis(int fd, const std::map<uint16_t, AbsInfo>& neutral,
       // the stick perfectly on-axis.
       const int32_t delta = extreme[e.code] - base;
       if (std::abs(delta) > it->second.span / 3) {
-        code_name = rgb::evdev_abs_name(e.code);
+        code_name = gpb::evdev_abs_name(e.code);
         invert = delta < 0;
         return true;
       }
@@ -242,14 +242,14 @@ bool capture_button(int fd, const std::set<uint16_t>& exclude_keys, std::string&
     }
     while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
       if (e.type == EV_KEY && e.value == 1 && !exclude_keys.count(e.code)) {
-        code_name = rgb::evdev_key_name(e.code);
+        code_name = gpb::evdev_key_name(e.code);
         is_axis = false;
         return true;
       }
       // Many pads report the d-pad as a hat axis rather than four buttons. Hat codes are
       // deliberately NOT excluded after use: up and down legitimately share ABS_HAT0Y.
       if (e.type == EV_ABS && (e.code == ABS_HAT0X || e.code == ABS_HAT0Y) && e.value != 0) {
-        code_name = rgb::evdev_abs_name(e.code);
+        code_name = gpb::evdev_abs_name(e.code);
         is_axis = true;
         axis_invert = e.value < 0;
         return true;
@@ -327,7 +327,7 @@ int cmd_wizard(const char* path) {
       std::printf("%s%s\n", invert ? "-" : "", code.c_str());
       axis_lines.push_back("axis." + code + " = " + (invert ? "-" : "") + p.target);
       bool ok = false;
-      used_axes.insert(rgb::evdev_code_from_name(code, ok));
+      used_axes.insert(gpb::evdev_code_from_name(code, ok));
     } else {
       std::printf("(timed out, skipped)\n");
     }
@@ -352,7 +352,7 @@ int cmd_wizard(const char* path) {
       } else {
         button_lines.push_back("button." + code + " = " + p.target);
         bool ok = false;
-        used_keys.insert(rgb::evdev_code_from_name(code, ok));
+        used_keys.insert(gpb::evdev_code_from_name(code, ok));
       }
     } else {
       std::printf("(timed out, skipped)\n");

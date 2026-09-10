@@ -1,9 +1,9 @@
-#include "rgb/recorder.hpp"
+#include "gpb/recorder.hpp"
 
 #include <chrono>
 #include <cstring>
 
-namespace rgb {
+namespace gpb {
 
 Recorder::~Recorder() { stop(); }
 
@@ -67,4 +67,4 @@ void Recorder::stop() {
   }
 }
 
-}  // namespace rgb
+}  // namespace gpb

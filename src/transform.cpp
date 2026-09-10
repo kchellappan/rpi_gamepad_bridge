@@ -1,9 +1,9 @@
-#include "rgb/transform.hpp"
+#include "gpb/transform.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace rgb {
+namespace gpb {
 namespace {
 
 // Radial deadzone on the pair, not per-axis. Per-axis deadzones are the classic cause of
@@ -48,4 +48,4 @@ void ProfileTransform::apply(GamepadState& s) {
   s.set(btn::kR2, s.rt > 40);
 }
 
-}  // namespace rgb
+}  // namespace gpb
