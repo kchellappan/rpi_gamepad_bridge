@@ -185,8 +185,13 @@ Produces `build/rgb-bridge` and `build/rgb-discover`.
 ## Bringing it up on the Pi
 
 ```bash
-# 1. one-time: enable peripheral mode, then reboot
-echo 'dtoverlay=dwc2,dr_mode=peripheral' | sudo tee -a /boot/firmware/config.txt
+# 0. dependencies (optional -- build.sh falls back to plain g++ if cmake is absent)
+sudo ./scripts/install_deps.sh
+./scripts/build.sh
+
+# 1. one-time: switch the USB-C port to peripheral mode, then reboot
+sudo ./scripts/enable_gadget_mode.sh
+sudo reboot
 
 # 2. each boot: create the HID gadget
 sudo ./scripts/gadget_up.sh
@@ -205,6 +210,21 @@ sudo ./build/rgb-bridge --config config/stadia_to_switch.ini --record session.bi
 # replay it, or drive from a policy, over the socket
 sudo ./build/rgb-bridge --config config/stadia_to_switch.ini --source socket
 ```
+
+### If `gadget_up.sh` says "no UDC found"
+
+A freshly flashed Raspberry Pi OS image (verified on Debian 13 / kernel 6.18, Pi 5) ships
+`config.txt` already containing:
+
+```
+otg_mode=1
+dtoverlay=dwc2,dr_mode=host
+```
+
+So `dwc2` is loaded, but bound as a **host**. `/sys/class/udc` is empty and the gadget has
+nothing to bind to. `scripts/enable_gadget_mode.sh` rewrites that one word to `peripheral`
+(keeping a timestamped backup); `--host` reverts it and `--show` just reports the current
+state. A reboot is required either way.
 
 ### On the polling interval
 
