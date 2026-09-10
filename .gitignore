@@ -1,0 +1,9 @@
+build/
+*.o
+*.a
+compile_commands.json
+.cache/
+
+# Capture sessions: these are training data, sometimes large, and are outputs rather
+# than sources. Keep them out of the repo.
+*.bin
