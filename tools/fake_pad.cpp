@@ -11,14 +11,17 @@
 //
 // Needs write access to /dev/uinput, so in practice: sudo.
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <linux/uinput.h>
+#include <sys/ioctl.h>
 #include <string.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -30,6 +33,30 @@ constexpr int kHatCodes[] = {ABS_HAT0X, ABS_HAT0Y};
 constexpr int kBtnCodes[] = {BTN_SOUTH, BTN_EAST,   BTN_NORTH,  BTN_WEST,
                              BTN_TL,    BTN_TR,     BTN_THUMBL, BTN_THUMBR,
                              BTN_SELECT, BTN_START, BTN_MODE,   BTN_TRIGGER_HAPPY1};
+
+// Find the /dev/input/eventN node the kernel just gave us, by name. The caller needs it
+// to point a reader at this pad specifically -- there may well be a real controller
+// plugged in alongside.
+std::string find_own_node() {
+  DIR* d = opendir("/dev/input");
+  if (!d) return "";
+  std::string found;
+  while (dirent* e = readdir(d)) {
+    if (std::strncmp(e->d_name, "event", 5) != 0) continue;
+    const std::string path = std::string("/dev/input/") + e->d_name;
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) continue;
+    char buf[256] = {0};
+    if (ioctl(fd, EVIOCGNAME(sizeof(buf) - 1), buf) >= 0 &&
+        std::strcmp(buf, "rgb-fakepad") == 0) {
+      found = path;
+    }
+    ::close(fd);
+    if (!found.empty()) break;
+  }
+  closedir(d);
+  return found;
+}
 
 void emit(int fd, uint16_t type, uint16_t code, int32_t value) {
   input_event e{};
@@ -99,12 +126,14 @@ void button_pulse(int fd, uint16_t code) {
   sync(fd);
 }
 
-int run_wizard_script(int fd) {
+int run_wizard_script(int fd, int lead_in_ms) {
   // Order must match rgb-discover wizard's prompts exactly.
   const int gap_us = 1500000;
-  std::printf("driving the wizard's prompt sequence...\n");
-
-  usleep(gap_us);
+  // Give the caller time to locate the node and attach a reader before the first event.
+  // Anything emitted before the wizard is listening is simply lost.
+  std::printf("driving the wizard's prompt sequence in %dms...\n", lead_in_ms);
+  std::fflush(stdout);
+  usleep(static_cast<useconds_t>(lead_in_ms) * 1000);
   struct { const char* label; uint16_t code; int32_t to; int32_t rest; } axes[] = {
       {"lx -> right", ABS_X, 255, 128},
       {"ly -> down",  ABS_Y, 255, 128},
@@ -151,18 +180,23 @@ int run_wizard_script(int fd) {
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "";
   if (mode != "--hold" && mode != "--wizard-script") {
-    std::fprintf(stderr, "usage: %s [--hold | --wizard-script]\n", argv[0]);
+    std::fprintf(stderr, "usage: %s [--hold | --wizard-script [lead_in_ms]]\n", argv[0]);
     return 2;
   }
+  const int lead_in_ms = argc > 2 ? std::atoi(argv[2]) : 6000;
+
   int fd = create_device();
   if (fd < 0) return 1;
   // udev needs a moment to publish the node before anyone can open it.
   usleep(400000);
-  std::printf("created virtual pad \"rgb-fakepad\"\n");
+  const std::string node = find_own_node();
+  std::printf("created virtual pad \"rgb-fakepad\" at %s\n",
+              node.empty() ? "(node not found)" : node.c_str());
+  std::fflush(stdout);
 
   int rc = 0;
-  if (mode == "--wizard-script") rc = run_wizard_script(fd);
-  else { std::printf("holding; Ctrl-C to remove\n"); pause(); }
+  if (mode == "--wizard-script") rc = run_wizard_script(fd, lead_in_ms);
+  else { std::printf("holding; Ctrl-C to remove\n"); std::fflush(stdout); pause(); }
 
   ioctl(fd, UI_DEV_DESTROY);
   ::close(fd);
