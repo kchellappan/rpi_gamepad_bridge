@@ -115,6 +115,7 @@ int create_device() {
 // stick and is precisely the case that broke the wizard: one movement answering several
 // prompts in a row.
 int g_hold_us = 250000;
+int g_gap_us = 1500000;
 
 void axis_pulse(int fd, uint16_t code, int32_t to, int32_t rest) {
   emit(fd, EV_ABS, code, to);
@@ -134,7 +135,13 @@ void button_pulse(int fd, uint16_t code) {
 
 int run_wizard_script(int fd, int lead_in_ms) {
   // Order must match rgb-discover wizard's prompts exactly.
-  const int gap_us = 1500000;
+  //
+  // This script is open-loop: it cannot see the wizard, so the gap must exceed the
+  // wizard's worst-case per-step overhead (waiting for the pad to return to rest). A human
+  // waits for the prompt; a script does not, and if it runs ahead the wizard captures
+  // whatever the script has moved on to -- a harness artifact that looks like a product
+  // bug.
+  const int gap_us = g_gap_us;
   // Give the caller time to locate the node and attach a reader before the first event.
   // Anything emitted before the wizard is listening is simply lost.
   std::printf("driving the wizard's prompt sequence in %dms...\n", lead_in_ms);
@@ -192,7 +199,10 @@ int main(int argc, char** argv) {
                  argv[0]);
     return 2;
   }
-  if (mode == "--wizard-script-sloppy") g_hold_us = 1400000;
+  if (mode == "--wizard-script-sloppy") {
+    g_hold_us = 1400000;   // release lands inside the NEXT prompt's window
+    g_gap_us = 4500000;    // ...but still leave the wizard time to reach that prompt
+  }
   const int lead_in_ms = argc > 2 ? std::atoi(argv[2]) : 6000;
 
   int fd = create_device();
