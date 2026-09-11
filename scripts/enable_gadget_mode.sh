@@ -91,9 +91,6 @@ echo "==> backed up to $BACKUP"
 TARGET_LINE=""
 while IFS=$'\t' read -r ln sec txt; do
   if in_scope "$sec"; then TARGET_LINE="$ln"; fi
-  if ! in_scope "$sec"; then
-    printf 'NOTE: line %s is inside [%s] and does not apply to this board; leaving it alone.\n' "$ln" "$sec"
-  fi
 done < <(scan_dwc2)
 
 if [[ -n "$TARGET_LINE" ]]; then
