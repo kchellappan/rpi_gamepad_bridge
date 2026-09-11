@@ -221,6 +221,25 @@ else
       "without it any class setting display can make an element unhideable"
 fi
 
+# The toast must stack above the modal overlay. It is the only channel the wizard has for
+# reporting an error, and the wizard runs inside that overlay -- underneath it, messages are
+# both hidden and blurred by the overlay's backdrop-filter.
+ZORDER="$(python3 - <<'PYZ'
+import re, pathlib
+css = pathlib.Path("web/static/style.css").read_text()
+def z(selector):
+    m = re.search(re.escape(selector) + r"\s*\{[^}]*?z-index:\s*(\d+)", css, re.S)
+    return int(m.group(1)) if m else None
+print(f"{z('.toast')} {z('.overlay')}")
+PYZ
+)"
+read -r TOAST_Z OVERLAY_Z <<<"$ZORDER"
+if [[ "$TOAST_Z" != "None" && "$OVERLAY_Z" != "None" && $TOAST_Z -gt $OVERLAY_Z ]]; then
+  ok "toast stacks above the modal overlay (${TOAST_Z} > ${OVERLAY_Z})"
+else
+  bad "toast would render behind the wizard modal" "toast z-index=$TOAST_Z overlay z-index=$OVERLAY_Z"
+fi
+
 # Every element id the scripts reach for must actually exist in the markup: a typo there
 # produces a null dereference that silently kills the rest of the script.
 MISSING="$(python3 - <<'PYCHK'

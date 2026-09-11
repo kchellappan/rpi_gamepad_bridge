@@ -124,6 +124,11 @@ main { max-width: 880px; margin: 0 auto; padding: 1.25rem; display: grid; gap: 1
   max-height: 22rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
 }
 .toast {
+  /* Above .overlay (z-index 20). The toast is how the wizard reports errors, and the wizard
+     runs inside the overlay -- at a lower z-index it rendered behind the modal and was
+     blurred by its backdrop-filter, so every message it produced was unreadable exactly
+     when it mattered. */
+  z-index: 40;
   position: fixed; left: 50%; bottom: 1.4rem; transform: translate(-50%, 1.5rem);
   background: var(--ink); color: var(--bg); padding: .6rem 1rem; border-radius: 9px;
   font-size: .85rem; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s;
