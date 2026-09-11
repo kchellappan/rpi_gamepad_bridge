@@ -28,7 +28,7 @@ between working and silently not working, so they are listed as specifically as 
 | Power/data split | the [USB-C OTG splitter](https://www.amazon.com/Charging-Adapter-Splitter-Compatible-Chromecast/dp/B0B5MPCJF5/) linked below |
 | Data leg to host | a **data-capable** USB-A-to-C cable (a charge-only one fails silently) |
 | Controller | Google Stadia Controller rev. A, wired |
-| Host | the Pi's own USB-A port, as a loopback |
+| Console | **Nintendo Switch 2**, via a USB-A port on the official dock |
 
 **Explicitly not verified:**
 
@@ -36,11 +36,9 @@ between working and silently not working, so they are listed as specifically as 
   later traced to the charge-only cable and never retested with working hardware, so 6.18 is
   unproven in both directions rather than known-bad. See the kernel note below.
 - **Any other splitter or data cable.** Both are load-bearing and both fail silently.
-- **A real console.** The output path is proven against a Linux USB host, not a Nintendo
-  Switch. The descriptor comes from a configuration that did enumerate on a Switch, but this
-  repo has not been plugged into one.
-- **Switch 2.** Nintendo gates its USB-C port behind proprietary authentication; whether that
-  extends to HID devices on the dock's USB-A ports is unknown.
+- **The original Switch.** Only a Switch 2 has been tested. The descriptor originates from a
+  configuration that enumerated on an original Switch, so it is expected to work, but it has
+  not been re-verified here.
 - **Other controllers.** They route through the same `EvdevSource`, so a `gpb-discover
   wizard` run should be all that is needed -- but only the Stadia has actually been run.
 - **The XInput/PC sink and cross-compilation.** Not implemented.
@@ -199,7 +197,8 @@ achievable, and the blocker on two of them is cryptography rather than effort:
 
 | Target | Feasible? | Why |
 |---|---|---|
-| **Nintendo Switch** | **Yes** | Present as a HORI Pokken Tournament Pro Pad. Plain USB HID, no authentication handshake. This is the validated path. |
+| **Nintendo Switch 2** | **Yes -- verified** | Enumerates over a USB-A port on the official dock and plays correctly. See the note below: the USB-C lockdown does not extend to this path. |
+| **Nintendo Switch (original)** | **Yes** | Present as a HORI pad. Plain USB HID, no authentication handshake. The descriptor in use originated here. |
 | **PC (Linux / DirectInput)** | **Yes** | A generic HID gamepad descriptor is accepted directly. |
 | **PC (Windows / XInput)** | **Yes, harder** | Requires impersonating an Xbox 360 pad — matching VID/PID `045E:028E` plus its vendor-specific interface descriptors — so Windows binds its inbox `xusb` driver. More fiddly than HID, but no crypto. |
 | **PS4 / PS5** | **Blocked** | DualShock 4 / DualSense authenticate against the console via a challenge/response signed by a key held in a licensed auth IC. Unlicensed adapters work by proxying a genuine controller as an auth donor. Without that silicon the console rejects the pad (DS4 historically times out after ~8 minutes). |
@@ -209,8 +208,12 @@ So: design the base class for all of them, but plan on **Switch and PC**. PlaySt
 Xbox consoles are not an engineering-effort problem, and no amount of clean architecture
 unblocks them.
 
-> Switch 2 is unverified — there are reports of tighter controller authorization than the
-> original Switch. Worth testing before assuming the Pokken path carries over.
+> **On the Switch 2 specifically.** Nintendo gates the Switch 2's *USB-C* port behind
+> proprietary vendor-defined signalling, which broke third-party docks and was re-broken by
+> a later firmware update. That reporting led this project to expect the Switch 2 might join
+> PS4/PS5 and Xbox in the blocked column. **It does not.** The restriction covers the
+> console's USB-C port; the official dock's USB-A ports are conventional USB host ports, and
+> a plain HID gamepad presented there is accepted and pairs normally.
 
 ## Capture and inject
 
@@ -344,9 +347,12 @@ Verified on the target hardware (Pi 5 Model B Rev 1.0, Bookworm, kernel 6.6.51, 
 - `dwc2` peripheral mode, gadget creation, and **enumeration**: the host sees
   `0f0d:00c1 Hori Co., Ltd HORIPAD for Nintendo Switch` at **high speed**, and the HID
   descriptor parses into a working gamepad input device.
+- **Playing on a real console.** A Nintendo Switch 2 enumerates the gadget over its dock,
+  pairs with it, and its controller test passes: both sticks track correctly in all
+  directions and every button registers cleanly.
 - **Full round trip through real USB.** Injecting states over the socket and reading them
-  back off the host's own USB stack reproduces them exactly -- axes, hat, and every button
-  bit landing where the descriptor says it should.
+  back off a Linux host's own USB stack reproduces them exactly -- axes, hat, and every
+  button bit landing where the descriptor says it should.
 - **Measured latency: 0.8-1.0 ms** for inject -> gadget -> host USB -> evdev. That is the
   1 ms high-speed polling interval, confirming the interval dominates and that there is
   nothing left to win in userspace.
@@ -388,7 +394,7 @@ button held forever), and retries every 500ms, re-resolving the configured glob 
 node number is picked up automatically. `--record` captures survive it; the stats line
 reports disconnect and reconnect counts.
 
-### Three traps worth knowing about
+### Four traps worth knowing about
 
 **evdev's face-button aliases lie about position -- confirmed on hardware.** `BTN_X` is an
 alias for `BTN_NORTH` and `BTN_Y` for `BTN_WEST`, but on this layout X sits *west* and Y
@@ -404,6 +410,18 @@ Switch -- which would have presented as a mapping *preference* complaint rather 
 and could have survived a long time. This is why the wizard asks you to press the *top*
 button and records whatever code actually arrives.
 
+**A console needs continuous reporting, not change events.** This one presents as a mapping
+bug and is not one. With `heartbeat_hz = 0`, the Switch 2 tracked both analog sticks
+perfectly but required roughly five presses of a button to register one, then behaved as
+though a button were held.
+
+Axis values are absolute, so any report that lands carries the correct stick position --
+sticks are robust to sparse reporting. A button press, though, existed in exactly one report
+out of thousands of polls; miss that poll and the press never happened. A real gamepad
+transmits its complete state every polling interval, so a held button appears in hundreds of
+consecutive polls. **Sticks working while buttons misbehave is the signature of sparse
+reporting**, not of a bad mapping. Setting `heartbeat_hz = 125` fixed it outright.
+
 **A dead fd spins epoll.** `epoll` keeps reporting `EPOLLERR`/`EPOLLHUP` on a descriptor
 whose device has gone away, so a read loop that logs the error and returns will be re-entered
 immediately, forever, emitting one line per iteration. A source that can vanish has to drop
@@ -417,11 +435,13 @@ emits_canonical()` marks sources that already speak post-transform action space
 
 ## Status
 
-Working within the single verified configuration above, pending a real console.
+**Working on real hardware.** A wired Stadia controller drives a Nintendo Switch 2 through
+the bridge: the console pairs with the gadget and its controller test passes on both sticks
+and all buttons.
 
-The full chain is proven on hardware: controller in, normalized, encoded, out over USB as a
-HORIPAD, and read back correctly by a Linux host at 0.8-1.0 ms round trip. Both services
-come up on boot and recover from the controller's self-re-enumeration.
+The chain is verified end to end -- controller in, normalized, mapped, encoded, out over USB
+as a HORIPAD at high speed, with a measured 0.8-1.0 ms round trip against a Linux host. Both
+services start at boot and recover from the controller's self-re-enumeration.
 
-Remaining: plug into an actual Nintendo Switch. Then the XInput/PC sink and
-cross-compilation, both scoped as later work from the outset.
+Not yet done: the XInput/PC sink, and cross-compilation. Both were scoped as later work from
+the outset.
