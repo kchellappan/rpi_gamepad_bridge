@@ -36,9 +36,11 @@ else
   g++ "${FLAGS[@]}" "${CORE_SRC[@]}" tools/discover.cpp -o "$BUILD_DIR/gpb-discover" -lpthread
   echo "    gpb-fakepad"
   g++ "${FLAGS[@]}" tools/fake_pad.cpp -o "$BUILD_DIR/gpb-fakepad"
+  echo "    gpb-latency"
+  g++ "${FLAGS[@]}" tools/latency.cpp -o "$BUILD_DIR/gpb-latency"
 fi
 
 echo
-ls -la "$BUILD_DIR"/gpbridge "$BUILD_DIR"/gpb-discover "$BUILD_DIR"/gpb-fakepad
+ls -la "$BUILD_DIR"/gpbridge "$BUILD_DIR"/gpb-discover "$BUILD_DIR"/gpb-fakepad "$BUILD_DIR"/gpb-latency
 echo
 echo "next: ./$BUILD_DIR/gpb-discover list"
