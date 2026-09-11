@@ -58,9 +58,12 @@ import sys
 d=open('$TMP/hid.bin','rb').read()
 print(' '.join(d[i:i+8].hex() for i in range(0,len(d)//8*8,8)))")"
   # neutral at startup, then each injected state. Verified against real hardware.
-  # neutral at enumeration, then: East+stick-right, North+dpad-up-left, all released.
-  # These bytes were verified against a real Nintendo Switch 2.
-  EXPECTED="0000088080808000 040008ff80808000 0800078080808000 0000088080808000"
+  # neutral at enumeration; East+stick-right; North+dpad-up-left; all released; and a final
+  # neutral written on shutdown. These bytes were verified against a real Nintendo Switch 2.
+  #
+  # That trailing neutral is a safety property, not an artifact: the host holds whatever we
+  # last sent, so exiting with a button pressed would leave it held on the console forever.
+  EXPECTED="0000088080808000 040008ff80808000 0800078080808000 0000088080808000 0000088080808000"
   EXPECTED="$(echo "$EXPECTED" | tr -d ' ')"
   if [[ "$(echo "$ACTUAL" | tr -d ' ')" == "$EXPECTED" ]]; then
     ok "reports encode exactly as expected"
@@ -68,6 +71,17 @@ print(' '.join(d[i:i+8].hex() for i in range(0,len(d)//8*8,8)))")"
     bad "report bytes differ" "expected: $EXPECTED
         actual:   $(echo "$ACTUAL" | tr -d ' ')"
   fi
+fi
+
+# Assert the release-on-exit property by itself, so a regression names the actual problem
+# rather than showing a wall of differing hex.
+LAST="$(python3 -c "
+d=open('$TMP/hid.bin','rb').read()
+print(d[-8:].hex() if len(d)>=8 else 'short')")"
+if [[ "$LAST" == "0000088080808000" ]]; then
+  ok "output is released to neutral on shutdown (no stuck buttons)"
+else
+  bad "did not release to neutral on shutdown" "last report was $LAST"
 fi
 
 # ---------------------------------------------------------------- 2. capture/replay
@@ -172,6 +186,81 @@ print(' '.join(d[i:i+8].hex() for i in range(0,len(d)//8*8,8)))")"
     fi
   fi
 fi
+
+# ---------------------------------------------------------------- 6. no dependency creep
+echo "python dependency check"
+if OUT="$(python3 tests/check_stdlib_only.py 2>&1)"; then
+  echo "$OUT"; PASS=$((PASS+1))
+else
+  echo "$OUT"; FAIL=$((FAIL+1))
+fi
+
+# ---------------------------------------------------------------- 7. web control panel
+echo "web control panel"
+WEBPORT=$(( 18000 + RANDOM % 2000 ))
+printf 'GPB_CONFIG=%s/config/stadia_to_switch.ini\nGPB_SOURCE=evdev\n' "$PWD" > "$TMP/active.env"
+echo "testsecret" > "$TMP/webpass"
+echo "admin" > "$TMP/webuser"
+GPB_REPO="$PWD" GPB_ENVFILE="$TMP/active.env" GPB_PASSFILE="$TMP/webpass" \
+GPB_USERFILE="$TMP/webuser" GPB_PORT=$WEBPORT \
+  python3 web/gpb_web.py > "$TMP/web.log" 2>&1 &
+WPID=$!
+for _ in $(seq 1 40); do
+  curl -fsS -o /dev/null -u admin:testsecret "http://127.0.0.1:$WEBPORT/api/status" 2>/dev/null && break
+  sleep 0.25
+done
+
+code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+BASE="http://127.0.0.1:$WEBPORT"
+
+if [[ "$(code "$BASE/")" == "401" && "$(code -u admin:wrong "$BASE/")" == "401" \
+   && "$(code -u nobody:testsecret "$BASE/")" == "401" \
+   && "$(code -u admin:testsecret "$BASE/")" == "200" ]]; then
+  ok "both username and password are enforced"
+else
+  bad "auth did not behave as expected" \
+      "anon=$(code "$BASE/") badpass=$(code -u admin:wrong "$BASE/") baduser=$(code -u nobody:testsecret "$BASE/") ok=$(code -u admin:testsecret "$BASE/")"
+fi
+
+# Credentials are read per request rather than cached at startup. Caching meant editing the
+# password file did nothing until someone restarted the service -- a silent failure that
+# looks exactly like a successful rotation.
+echo "rotated" > "$TMP/webpass"
+echo "operator" > "$TMP/webuser"
+if [[ "$(code -u admin:testsecret "$BASE/")" == "401" \
+   && "$(code -u operator:rotated "$BASE/")" == "200" ]]; then
+  ok "rotating the credential files takes effect without a restart"
+else
+  bad "credential rotation did not take effect live" \
+      "old=$(code -u admin:testsecret "$BASE/") new=$(code -u operator:rotated "$BASE/")"
+fi
+echo "testsecret" > "$TMP/webpass"; echo "admin" > "$TMP/webuser"
+
+if curl -fsS -u admin:testsecret "$BASE/api/status" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+assert 'bridge' in d and 'udc' in d and 'configs' in d and 'active' in d
+assert any(c['name'].endswith('.ini') for c in d['configs']), 'no configs listed'
+" 2>/dev/null; then
+  ok "status endpoint reports services, USB state and available configs"
+else
+  bad "status endpoint malformed" "$(curl -s -u admin:testsecret "$BASE/api/status" | head -c 200)"
+fi
+
+# The selected config must be one of the known files: an arbitrary path is a file-disclosure
+# and arbitrary-exec hazard, since whatever is named here is handed to the service.
+REJECT="$(curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' \
+  -d '{"config":"/etc/shadow","source":"evdev","restart":false}' "$BASE/api/select")"
+REJECT2="$(curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' \
+  -d "{\"config\":\"$PWD/config/stadia_to_switch.ini\",\"source\":\"pwn\",\"restart\":false}" "$BASE/api/select")"
+if grep -q '"ok": false' <<<"$REJECT" && grep -q '"ok": false' <<<"$REJECT2"; then
+  ok "config and source selections are validated against an allowlist"
+else
+  bad "selection validation is too permissive" "path: $REJECT
+        source: $REJECT2"
+fi
+
+kill $WPID 2>/dev/null; wait $WPID 2>/dev/null
 
 echo
 echo "$PASS passed, $FAIL failed"

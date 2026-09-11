@@ -16,6 +16,8 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 UNIT_DIR=/etc/systemd/system
+CONF_DIR=/etc/gpbridge
+ENVFILE="$CONF_DIR/active.env"
 
 if [[ "${1:-}" == "--uninstall" ]]; then
   [[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
@@ -31,8 +33,23 @@ CONFIG="${1:-$REPO/config/stadia_to_switch.ini}"
 [[ -f "$CONFIG" ]] || { echo "no such config: $CONFIG" >&2; exit 1; }
 [[ -x "$REPO/build/gpbridge" ]] || { echo "build first: $REPO/scripts/build.sh" >&2; exit 1; }
 
+# Which config and source the bridge starts with now lives in an env file rather than being
+# baked into ExecStart, so the web panel can change it without rewriting a unit.
+mkdir -p "$CONF_DIR"
+if [[ ! -f "$ENVFILE" ]]; then
+  cat > "$ENVFILE" <<ENV
+# Written by gpb-web. The .ini files remain the source of truth;
+# this only selects which one the service starts with.
+GPB_CONFIG=$CONFIG
+GPB_SOURCE=evdev
+ENV
+  echo "wrote $ENVFILE"
+else
+  echo "keeping existing $ENVFILE ($(grep -m1 '^GPB_CONFIG=' "$ENVFILE" | cut -d= -f2-))"
+fi
+
 for u in gpb-gadget gpbridge; do
-  sed -e "s|@REPO@|$REPO|g" -e "s|@CONFIG@|$CONFIG|g" \
+  sed -e "s|@REPO@|$REPO|g" -e "s|@CONFIG@|$CONFIG|g" -e "s|@ENVFILE@|$ENVFILE|g" \
       "$REPO/systemd/$u.service.in" > "$UNIT_DIR/$u.service"
   echo "wrote $UNIT_DIR/$u.service"
 done

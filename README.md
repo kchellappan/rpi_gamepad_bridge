@@ -62,7 +62,11 @@ sudo ./scripts/enable_gadget_mode.sh   # puts the USB-C port in peripheral mode
 sudo reboot
 
 sudo ./scripts/install_services.sh  # gadget + bridge, started at boot
+sudo ./scripts/install_web.sh --user you   # control panel on :8080
 ```
+
+The install script prints a URL and a generated password. From there you can do most things
+without SSH — see [Web control panel](#web-control-panel).
 
 Then teach it your controller's layout and point the config at the result:
 
@@ -89,6 +93,36 @@ sudo ./build/gpbridge --config config/stadia_to_switch.ini --record session.bin
 sudo ./build/gpbridge --config config/stadia_to_switch.ini --source socket
 ```
 
+## Web control panel
+
+`http://<host>.local:8080/` — start, stop and restart the bridge, pick a config, switch
+between controller and socket mode, and read the log, without SSH.
+
+It runs as its own service (`gpb-web`), deliberately separate from `gpbridge`: the bridge is
+a real-time loop and has no business hosting an HTTP server, and a process cannot cleanly
+restart itself. It also stays up while the bridge is stopped, which is half of what it is for.
+
+- **Auth** is HTTP basic. The username lives in `/etc/gpbridge/webuser` (default `admin`)
+  and the password in `/etc/gpbridge/webpass`, generated at install. Both are read on every
+  request, so changing them takes effect immediately:
+
+  ```bash
+  sudo ./scripts/install_web.sh --set-password        # or --set-password mysecret
+  sudo ./scripts/install_web.sh --set-user karthik
+  sudo ./scripts/install_web.sh --show                # print the URL and current username
+  ```
+- **Privileges** come from a narrow sudoers rule covering four specific `systemctl` calls and
+  reading the bridge's journal — the server itself runs unprivileged.
+- **Selection** is written to `/etc/gpbridge/active.env`, which the `gpbridge` unit reads.
+  The `.ini` files stay the source of truth, so the panel and SSH never disagree.
+- **No venv, no pip, no build step.** The server imports nothing outside the Python standard
+  library, and CI enforces that rather than trusting it.
+
+Changing a config restarts the bridge but leaves the USB device in place, so the console sees
+a brief gap in reports rather than a controller disconnect. The **Re-enumerate gadget** button
+exists for when something has genuinely wedged; it is never triggered automatically, because
+re-enumeration *does* show the console a disconnect.
+
 ## Configuration
 
 One INI file selects the source and sink, maps the controller, and shapes the sticks. See
@@ -96,6 +130,7 @@ One INI file selects the source and sink, maps the controller, and shapes the st
 
 | Key | Meaning |
 |---|---|
+| `meta.name` / `meta.description` | Human-readable label shown in the control panel; falls back to the filename |
 | `bridge.source` / `bridge.sink` | Which implementations to use (`evdev`, `socket` / `ns_hid`) |
 | `bridge.record_path` | Capture destination; empty disables recording |
 | `bridge.rt_priority`, `bridge.cpu_affinity` | Optional `SCHED_FIFO` priority and core pinning |
@@ -183,6 +218,7 @@ here unlocks them without the licensed silicon.
 | `gpbridge` | The bridge itself |
 | `gpb-discover` | `list` devices, dump `caps`, or run the mapping `wizard` |
 | `gpb-fakepad` | A uinput-backed virtual gamepad, for testing without hardware |
+| `web/gpb_web.py` | The control panel; standard library only, no pip |
 
 ## Tests
 
@@ -191,9 +227,10 @@ here unlocks them without the licensed silicon.
 ```
 
 Runs with no Pi, no gadget and no controller: the socket source stands in for a controller
-and a regular file stands in for `/dev/hidg0`. Covers report encoding, capture/replay
-equivalence, wire-format stability, startup validation, and the evdev path via a virtual pad.
-CI runs this on every push.
+and a regular file stands in for `/dev/hidg0`. Covers report encoding, release-on-shutdown,
+capture/replay equivalence, wire-format stability, startup validation, the evdev path via a
+virtual pad, control-panel auth and credential rotation, and a check that no Python file
+imports outside the standard library. CI runs all of it on every push.
 
 ## Verified configuration
 

@@ -172,10 +172,23 @@ bool NsHidSink::flush() {
 }
 
 void NsHidSink::shutdown() {
-  if (fd_ >= 0) {
-    ::close(fd_);
-    fd_ = -1;
-  }
+  if (fd_ < 0) return;
+
+  // Release everything before letting go of the device.
+  //
+  // The host holds whatever we last sent. Exiting with a button pressed therefore leaves
+  // that button held on the console indefinitely -- there is nothing left running to say
+  // otherwise. This matters most for a deliberate restart, which is otherwise invisible to
+  // the console: a one second gap in reports is nothing, a permanently stuck button is not.
+  //
+  // Symmetric with the release the bridge performs when the input source disappears.
+  PokkenReport neutral{};
+  neutral.hat = kHatNeutral;
+  neutral.lx = neutral.ly = neutral.rx = neutral.ry = 0x80;
+  write_report(neutral);
+
+  ::close(fd_);
+  fd_ = -1;
 }
 
 }  // namespace gpb
