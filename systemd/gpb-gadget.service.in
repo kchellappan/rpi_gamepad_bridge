@@ -1,0 +1,17 @@
+[Unit]
+Description=USB HID gamepad gadget (HORI Pokken descriptor)
+Documentation=https://github.com/kchellappan/rpi_gamepad_bridge
+# configfs must be mounted before the gadget can be built, and the gadget must exist
+# before the bridge tries to open /dev/hidg0.
+After=sys-kernel-config.mount
+Wants=sys-kernel-config.mount
+Before=gpbridge.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@REPO@/scripts/gadget_up.sh
+ExecStop=@REPO@/scripts/gadget_down.sh
+
+[Install]
+WantedBy=multi-user.target

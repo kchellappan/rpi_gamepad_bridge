@@ -1,0 +1,22 @@
+[Unit]
+Description=Gamepad bridge (evdev -> USB HID gadget)
+Documentation=https://github.com/kchellappan/rpi_gamepad_bridge
+Requires=gpb-gadget.service
+After=gpb-gadget.service
+
+[Service]
+Type=simple
+ExecStart=@REPO@/build/gpbridge --config @CONFIG@
+
+# The bridge already tolerates a missing controller and reconnects on its own, so a
+# restart here is for genuine crashes only -- not for the pad being unplugged.
+Restart=on-failure
+RestartSec=2
+
+# Headroom for the optional real-time settings in the config (bridge.rt_priority,
+# and mlockall). Granting the limits costs nothing when they are left at defaults.
+LimitRTPRIO=99
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
