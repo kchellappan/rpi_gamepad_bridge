@@ -108,11 +108,6 @@ mkdir -p "$CONF_DIR" "$STATE_DIR"
 # The service writes its selection here by creating a temp file and renaming, so it needs
 # write permission on the directory itself, not just on the file.
 chown "$SERVICE_USER" "$STATE_DIR"
-if [[ -f "$CONF_DIR/active.env" && ! -f "$ENVFILE" ]]; then
-  mv "$CONF_DIR/active.env" "$ENVFILE"
-  echo "==> moved active.env to $STATE_DIR"
-fi
-
 # Seed the active selection if absent, so the bridge has something to start with before
 # anyone opens the page.
 if [[ ! -f "$ENVFILE" ]]; then

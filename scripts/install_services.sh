@@ -43,12 +43,6 @@ CONFIG="${1:-$REPO/config/stadia_to_switch.ini}"
 mkdir -p "$CONF_DIR" "$STATE_DIR"
 chown "${SUDO_USER:-${USER:-pi}}" "$STATE_DIR"
 
-# Migrate an env file left in /etc by an earlier install.
-if [[ -f "$CONF_DIR/active.env" && ! -f "$ENVFILE" ]]; then
-  mv "$CONF_DIR/active.env" "$ENVFILE"
-  chown "${SUDO_USER:-${USER:-pi}}" "$ENVFILE"
-  echo "moved active.env to $STATE_DIR (service state does not belong in /etc)"
-fi
 
 if [[ ! -f "$ENVFILE" ]]; then
   cat > "$ENVFILE" <<ENV
