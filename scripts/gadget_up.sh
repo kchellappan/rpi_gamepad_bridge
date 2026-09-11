@@ -39,33 +39,51 @@ fi
 mkdir -p "$G"
 cd "$G"
 
+# Descriptors below are taken from a configuration that was confirmed working against a
+# real Nintendo Switch on this hardware. They are not reconstructed from prior art, and
+# they differ from prior art in ways that matter -- see the report descriptor note.
 echo 0x0f0d > idVendor          # HORI CO., LTD.
-echo 0x0092 > idProduct         # Pokken Tournament Pro Pad
+echo 0x00c1 > idProduct         # HORIPAD for Nintendo Switch
+echo 0x0100 > bcdDevice         # v1.0.0
 echo 0x0200 > bcdUSB            # USB 2.0
-echo 0x0100 > bcdDevice
+echo 0x00   > bDeviceClass
+echo 0x00   > bDeviceSubClass
+echo 0x00   > bDeviceProtocol
 
 mkdir -p strings/0x409
-echo "HORI CO.,LTD."      > strings/0x409/manufacturer
-echo "POKKEN CONTROLLER"  > strings/0x409/product
-echo "000000000001"       > strings/0x409/serialnumber
+echo "Raspberry Pi" > strings/0x409/manufacturer
+echo "NSGamepad"    > strings/0x409/product
+# No serialnumber: the validated configuration did not set one, and there is no reason to
+# diverge from it for cosmetics.
 
 mkdir -p configs/c.1/strings/0x409
-echo "Configuration 1" > configs/c.1/strings/0x409/configuration
-echo 500               > configs/c.1/MaxPower
+echo 0x80 > configs/c.1/bmAttributes   # bus powered, no remote wakeup
+echo 500  > configs/c.1/MaxPower
 
 mkdir -p functions/hid.usb0
 echo 0 > functions/hid.usb0/protocol
 echo 0 > functions/hid.usb0/subclass
 echo 8 > functions/hid.usb0/report_length
 
-# HID report descriptor: 16 buttons, one 4-bit hat (+4 bits padding), four 8-bit axes,
-# one constant vendor byte. Total 8 bytes, matching struct PokkenReport.
+# HID report descriptor, 80 bytes.
+#
+# Declares 14 buttons plus 2 explicit padding bits, one 4-bit hat plus 4 padding bits,
+# four 8-bit axes, and one constant vendor byte -- 8 bytes of report in total.
+#
+# The 14-plus-padding split matters. An earlier version of this script declared 16 buttons
+# instead, which produces the identical byte layout but a different descriptor, and a host
+# that matches on the descriptor is entitled to care. This is the form that actually
+# enumerated on a Switch. struct PokkenReport uses exactly 14 buttons (8 in buttons_lo, 6
+# in buttons_hi), so it maps onto this without change.
+#
+# Written with printf rather than `xxd -r -ps`, because xxd is not installed on a default
+# Raspberry Pi OS image.
 printf '%b' \
 '\x05\x01\x09\x05\xa1\x01\x15\x00\x25\x01\x35\x00\x45\x01\x75\x01'\
-'\x95\x10\x05\x09\x19\x01\x29\x10\x81\x02\x05\x01\x25\x07\x46\x3b'\
-'\x01\x75\x04\x95\x01\x65\x14\x09\x39\x81\x42\x65\x00\x95\x01\x81'\
-'\x01\x26\xff\x00\x46\xff\x00\x09\x30\x09\x31\x09\x32\x09\x35\x75'\
-'\x08\x95\x04\x81\x02\x75\x08\x95\x01\x81\x01\xc0' \
+'\x95\x0e\x05\x09\x19\x01\x29\x0e\x81\x02\x95\x02\x81\x01\x05\x01'\
+'\x25\x07\x46\x3b\x01\x75\x04\x95\x01\x65\x14\x09\x39\x81\x42\x65'\
+'\x00\x95\x01\x81\x01\x26\xff\x00\x46\xff\x00\x09\x30\x09\x31\x09'\
+'\x32\x09\x35\x75\x08\x95\x04\x81\x02\x75\x08\x95\x01\x81\x01\xc0' \
 > functions/hid.usb0/report_desc
 
 ln -s functions/hid.usb0 configs/c.1/
