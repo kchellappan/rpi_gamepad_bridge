@@ -31,8 +31,9 @@ namespace {
 constexpr int kAbsCodes[] = {ABS_X, ABS_Y, ABS_Z, ABS_RZ, ABS_GAS, ABS_BRAKE};
 constexpr int kHatCodes[] = {ABS_HAT0X, ABS_HAT0Y};
 constexpr int kBtnCodes[] = {BTN_SOUTH, BTN_EAST,   BTN_NORTH,  BTN_WEST,
-                             BTN_TL,    BTN_TR,     BTN_THUMBL, BTN_THUMBR,
-                             BTN_SELECT, BTN_START, BTN_MODE,   BTN_TRIGGER_HAPPY1};
+                             BTN_TL,    BTN_TR,     BTN_TL2,    BTN_TR2,
+                             BTN_THUMBL, BTN_THUMBR, BTN_SELECT, BTN_START,
+                             BTN_MODE,   BTN_TRIGGER_HAPPY1};
 
 // Find the /dev/input/eventN node the kernel just gave us, by name. The caller needs it
 // to point a reader at this pad specifically -- there may well be a real controller
@@ -142,6 +143,13 @@ int run_emit_test(int fd) {
   usleep(200000);
   emit(fd, EV_KEY, BTN_SOUTH, 1); sync(fd);        // press the bottom face button
   usleep(200000);
+  // A DIGITAL trigger, with no analog axis behind it. ProfileTransform shadows the analog
+  // triggers onto these bits, and used to do so by assignment -- which erased a press bound
+  // this way, because lt/rt stay 0. Emitting it here keeps that from coming back.
+  emit(fd, EV_KEY, BTN_TR2, 1); sync(fd);
+  usleep(200000);
+  emit(fd, EV_KEY, BTN_TR2, 0); sync(fd);
+  usleep(150000);
   emit(fd, EV_KEY, BTN_SOUTH, 0);                  // release it and recentre, one batch:
   emit(fd, EV_ABS, ABS_X, 128); sync(fd);          // both land in a single SYN_REPORT
   usleep(300000);

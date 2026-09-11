@@ -42,10 +42,15 @@ void ProfileTransform::apply(GamepadState& s) {
   if (s.lt < trigger_deadzone_) s.lt = 0;
   if (s.rt < trigger_deadzone_) s.rt = 0;
 
-  // Keep the digital trigger bits consistent with the analog values, so a sink that only
-  // has digital shoulders (the Switch's ZL/ZR) behaves sanely without special-casing.
-  s.set(btn::kL2, s.lt > 40);
-  s.set(btn::kR2, s.rt > 40);
+  // Shadow the analog triggers onto the digital bits, so a sink with only digital shoulders
+  // (the Switch's ZL/ZR) behaves sensibly without special-casing.
+  //
+  // This ORs rather than assigns. Assigning clobbered the bit when the trigger was bound as
+  // a BUTTON instead of an axis -- a DualSense mapped with BTN_TL2/BTN_TR2 has no analog
+  // value, so lt stayed 0 and every press was immediately erased here. The control looked
+  // correctly mapped in the config and did nothing at all.
+  if (s.lt > 40) s.set(btn::kL2, true);
+  if (s.rt > 40) s.set(btn::kR2, true);
 }
 
 }  // namespace gpb

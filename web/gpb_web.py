@@ -271,10 +271,16 @@ def render_config(name: str, description: str, device: str, target: dict,
     then bindings grouped by kind. Nothing here is machine-only, so the file stays editable
     over SSH afterwards.
     """
+    # EvdevSource silently drops an axis binding whose target it does not recognise, so an
+    # invalid one is invisible until the control mysteriously does nothing. Refuse to write
+    # it in the first place.
+    VALID_AXES = {"lx", "ly", "rx", "ry", "lt", "rt", "hatx", "haty"}
     axis_lines, button_lines = [], []
     for m in mappings:
         code, target_name = m.get("code", ""), m.get("target", "")
         if not code or not target_name:
+            continue
+        if m.get("kind") == "axis" and target_name not in VALID_AXES:
             continue
         if m.get("kind") == "axis":
             sign = "-" if m.get("invert") else ""

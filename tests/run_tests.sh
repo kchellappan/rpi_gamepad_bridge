@@ -162,6 +162,7 @@ grab = false
 axis.ABS_X = lx
 axis.ABS_Y = ly
 button.BTN_SOUTH = south
+button.BTN_TR2 = r2
 [sink.ns_hid]
 device = $TMP/hid3.bin
 face_by_position = true
@@ -179,10 +180,20 @@ d=open('$TMP/hid3.bin','rb').read()
 print(' '.join(d[i:i+8].hex() for i in range(0,len(d)//8*8,8)))")"
     # Expect the stick to reach full right (lx=0xff) and the bottom face button to appear
     # as Switch B (bit 1 of byte 0) under face_by_position.
-    if grep -q "ff" <<<"$HEX" && grep -qE "02[0-9a-f]{2}" <<<"$HEX"; then
-      ok "evdev events reach the wire correctly"
+    # Expect: the stick reaching full right (lx=0xff), the bottom face button appearing as
+    # Switch B (bit 1 of byte 0), and a DIGITALLY bound trigger surviving as ZR (bit 7).
+    STICK=0; FACE=0; ZR=0
+    for r in $HEX; do
+      B0=$((16#${r:0:2}))
+      [[ "${r:6:2}" == "ff" ]] && STICK=1
+      (( B0 & 0x02 )) && FACE=1
+      (( B0 & 0x80 )) && ZR=1
+    done
+    if [[ $STICK -eq 1 && $FACE -eq 1 && $ZR -eq 1 ]]; then
+      ok "evdev events reach the wire, including a digitally bound trigger as ZR"
     else
-      bad "evdev path produced unexpected reports" "reports: $HEX"
+      bad "evdev path produced unexpected reports" "stick=$STICK face=$FACE zr=$ZR
+        reports: $HEX"
     fi
   fi
 fi
@@ -356,6 +367,18 @@ else
         $(head -20 config/__wizard_test.ini 2>/dev/null)"
 fi
 rm -f config/__wizard_test.ini
+
+# A digital ZL/ZR must survive the profile transform. It previously did not: the analog
+# shadow assigned the bit rather than OR-ing it, so a pad mapped with BTN_TL2/BTN_TR2 (no
+# analog value, lt stays 0) had every press erased immediately. The config looked right and
+# the control did nothing.
+BAD_AXIS="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"__bad_axis.ini\",\"name\":\"x\",\"mappings\":[{\"kind\":\"axis\",\"code\":\"ABS_HAT0Y\",\"target\":\"dup\"},{\"kind\":\"button\",\"code\":\"BTN_SOUTH\",\"target\":\"south\"}]}")"
+if grep -q '"ok": true' <<<"$BAD_AXIS" && ! grep -q 'dup' config/__bad_axis.ini; then
+  ok "an axis binding with an unusable target is refused rather than silently dropped later"
+else
+  bad "invalid axis target reached the config" "$(grep -n 'axis\.' config/__bad_axis.ini 2>/dev/null)"
+fi
+rm -f config/__bad_axis.ini
 
 kill $WPID 2>/dev/null; wait $WPID 2>/dev/null
 
