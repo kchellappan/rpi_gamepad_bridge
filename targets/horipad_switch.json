@@ -1,0 +1,239 @@
+{
+  "id": "horipad_switch",
+  "name": "HORIPAD for Nintendo Switch",
+  "sink": "ns_hid",
+  "summary": "The controller this bridge presents itself as. Map each of its controls to whatever you want to press on your own pad.",
+  "view": [
+    340,
+    216
+  ],
+  "body": "M 52 80 C 50 54 76 42 104 46 L 236 46 C 264 42 290 54 288 80 C 300 130 286 188 248 192 C 222 196 206 172 180 170 L 160 170 C 134 172 118 196 92 192 C 54 188 40 130 52 80 Z",
+  "controls": [
+    {
+      "id": "lstick",
+      "label": "Left stick",
+      "capture": "axis",
+      "shape": "stick",
+      "x": 94,
+      "y": 86,
+      "r": 20,
+      "steps": [
+        {
+          "target": "lx",
+          "prompt": "Push the stick you want as the LEFT stick fully RIGHT"
+        },
+        {
+          "target": "ly",
+          "prompt": "Now push that same stick fully DOWN"
+        }
+      ]
+    },
+    {
+      "id": "rstick",
+      "label": "Right stick",
+      "capture": "axis",
+      "shape": "stick",
+      "x": 214,
+      "y": 144,
+      "r": 20,
+      "steps": [
+        {
+          "target": "rx",
+          "prompt": "Push the stick you want as the RIGHT stick fully RIGHT"
+        },
+        {
+          "target": "ry",
+          "prompt": "Now push that same stick fully DOWN"
+        }
+      ]
+    },
+    {
+      "id": "dup",
+      "label": "D-pad up",
+      "target": "dup",
+      "capture": "button",
+      "x": 120,
+      "y": 128,
+      "r": 10,
+      "prompt": "Press what should be D-pad UP"
+    },
+    {
+      "id": "ddown",
+      "label": "D-pad down",
+      "target": "ddown",
+      "capture": "button",
+      "x": 120,
+      "y": 162,
+      "r": 10,
+      "prompt": "Press what should be D-pad DOWN"
+    },
+    {
+      "id": "dleft",
+      "label": "D-pad left",
+      "target": "dleft",
+      "capture": "button",
+      "x": 103,
+      "y": 145,
+      "r": 10,
+      "prompt": "Press what should be D-pad LEFT"
+    },
+    {
+      "id": "dright",
+      "label": "D-pad right",
+      "target": "dright",
+      "capture": "button",
+      "x": 137,
+      "y": 145,
+      "r": 10,
+      "prompt": "Press what should be D-pad RIGHT"
+    },
+    {
+      "id": "x",
+      "label": "X",
+      "target": "north",
+      "capture": "button",
+      "x": 254,
+      "y": 78,
+      "r": 12,
+      "prompt": "Press the button you want to act as X"
+    },
+    {
+      "id": "a",
+      "label": "A",
+      "target": "east",
+      "capture": "button",
+      "x": 278,
+      "y": 102,
+      "r": 12,
+      "prompt": "Press the button you want to act as A"
+    },
+    {
+      "id": "b",
+      "label": "B",
+      "target": "south",
+      "capture": "button",
+      "x": 254,
+      "y": 126,
+      "r": 12,
+      "prompt": "Press the button you want to act as B"
+    },
+    {
+      "id": "y",
+      "label": "Y",
+      "target": "west",
+      "capture": "button",
+      "x": 230,
+      "y": 102,
+      "r": 12,
+      "prompt": "Press the button you want to act as Y"
+    },
+    {
+      "id": "l",
+      "label": "L",
+      "target": "l1",
+      "capture": "button",
+      "shape": "bumper",
+      "x": 74,
+      "y": 34,
+      "r": 13,
+      "prompt": "Press what should be the L shoulder"
+    },
+    {
+      "id": "r",
+      "label": "R",
+      "target": "r1",
+      "capture": "button",
+      "shape": "bumper",
+      "x": 266,
+      "y": 34,
+      "r": 13,
+      "prompt": "Press what should be the R shoulder"
+    },
+    {
+      "id": "zl",
+      "label": "ZL",
+      "target": "l2",
+      "target_axis": "lt",
+      "capture": "any",
+      "shape": "bumper",
+      "x": 74,
+      "y": 14,
+      "r": 13,
+      "prompt": "Press or squeeze what should be ZL (a trigger works too)"
+    },
+    {
+      "id": "zr",
+      "label": "ZR",
+      "target": "r2",
+      "target_axis": "rt",
+      "capture": "any",
+      "shape": "bumper",
+      "x": 266,
+      "y": 14,
+      "r": 13,
+      "prompt": "Press or squeeze what should be ZR (a trigger works too)"
+    },
+    {
+      "id": "minus",
+      "label": "\u2212",
+      "target": "select",
+      "capture": "button",
+      "x": 148,
+      "y": 80,
+      "r": 9,
+      "prompt": "Press what should be Minus"
+    },
+    {
+      "id": "plus",
+      "label": "+",
+      "target": "start",
+      "capture": "button",
+      "x": 196,
+      "y": 80,
+      "r": 9,
+      "prompt": "Press what should be Plus"
+    },
+    {
+      "id": "capture_btn",
+      "label": "Cap",
+      "target": "misc1",
+      "capture": "button",
+      "x": 160,
+      "y": 120,
+      "r": 9,
+      "prompt": "Press what should be Capture (or skip)"
+    },
+    {
+      "id": "home",
+      "label": "Hm",
+      "target": "guide",
+      "capture": "button",
+      "x": 184,
+      "y": 120,
+      "r": 9,
+      "prompt": "Press what should be Home (or skip)"
+    },
+    {
+      "id": "l3",
+      "label": "L3",
+      "target": "l3",
+      "capture": "button",
+      "x": 94,
+      "y": 86,
+      "r": 0,
+      "prompt": "Press what should be a LEFT stick click",
+      "highlight": "lstick"
+    },
+    {
+      "id": "r3",
+      "label": "R3",
+      "target": "r3",
+      "capture": "button",
+      "x": 214,
+      "y": 144,
+      "r": 0,
+      "prompt": "Press what should be a RIGHT stick click",
+      "highlight": "rstick"
+    }
+  ]
+}

@@ -95,6 +95,27 @@ function renderStatus(s) {
         pending.config = c.path;
         markSelection(s.active.config);
       });
+      // Deleting is offered per row, but the server refuses to remove the config that is
+      // currently selected -- losing the file driving a live console should take a
+      // deliberate switch first, not one stray click.
+      const del = document.createElement('button');
+      del.className = 'btn btn-quiet btn-danger';
+      del.textContent = 'Delete';
+      del.style.marginLeft = 'auto';
+      del.addEventListener('click', async (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        if (!confirm(`Delete ${c.name}?\n\nThis cannot be undone.`)) return;
+        try {
+          const r = await api('/api/config/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: c.path }),
+          });
+          toast(r.message, !r.ok);
+          if (r.ok) { lastConfigSignature = ''; refresh(); }
+        } catch (err) { toast(String(err), true); }
+      });
+      el.appendChild(del);
       list.appendChild(el);
     }
   }
