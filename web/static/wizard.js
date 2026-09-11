@@ -76,6 +76,16 @@ function buildSteps(target) {
   return steps;
 }
 
+// Feedback belongs inside the modal, next to the thing it is about. A toast sits outside
+// the overlay and reads as an alert regardless of what it says.
+function note(message, kind) {
+  const el = wq('wiz-note');
+  if (!message) { el.hidden = true; el.textContent = ''; return; }
+  el.textContent = message;
+  el.classList.toggle('error', kind === 'error');
+  el.hidden = false;
+}
+
 function show(step) {
   for (const id of ['wiz-setup', 'wiz-capture', 'wiz-save']) wq(id).hidden = id !== step;
 }
@@ -126,9 +136,10 @@ function mark(box, chosen) {
 // Without that, Skip could only set the index -- the in-flight capture kept running, so the
 // button looked dead until the full timeout elapsed, and the late response then advanced the
 // index a second time and silently skipped an extra control.
-async function nextStep() {
+async function nextStep(keepNote) {
   if (!W.running) return;
   if (W.index >= W.steps.length) return toSave();
+  if (!keepNote) note('');
 
   const step = W.steps[W.index];
   const gen = ++W.gen;
@@ -153,17 +164,20 @@ async function nextStep() {
     });
   } catch (e) {
     if (gen !== W.gen) return;          // aborted deliberately; a newer step owns the flow
-    toast('capture failed: ' + e, true);
+    note('Could not read the controller: ' + e, 'error');
     W.running = false;
     return;
   }
   if (gen !== W.gen || !W.running) return;   // superseded while we were waiting
 
   if (!res.ok && res.error === 'already_bound') {
-    // The user pressed something real; it is just spoken for. Saying so beats a silent
-    // timeout, especially on a pad with no spare control for this target.
+    // The user pressed something real; it is just spoken for. Retry the SAME step rather
+    // than advancing: they almost certainly want to map this target, not skip it. And this
+    // is information, not an error -- some pads genuinely have no spare control.
     const owner = W.mappings.find((m) => m.code === res.code);
-    toast(`${res.code} is already mapped to ${owner ? owner.label : 'another control'}`, true);
+    note(`${res.code} is already mapped to ${owner ? owner.label : 'another control'}. `
+       + `Try a different control, or Skip if this pad has none to spare.`);
+    return nextStep(true);
   }
 
   if (res.ok) {
@@ -183,10 +197,10 @@ async function nextStep() {
         targetName = step.control.target_axis;   // e.g. an analog trigger answering ZL
       } else {
         // An axis answered a prompt with no axis equivalent. Recording it would emit a
-        // binding that cannot work, so decline it and let the user try again.
-        toast(`${step.control.label}: that is an axis, and ${step.control.label} needs a button`, true);
-        W.index += 1;
-        return nextStep();
+        // binding that cannot work, so decline it and retry the same step.
+        note(`${step.control.label} needs a button, but that was an axis (${res.code}). `
+           + `Try a button, or Skip.`);
+        return nextStep(true);
       }
     }
 
@@ -254,7 +268,7 @@ function wireWizard() {
   });
 
   // Skipping advances without recording, so a pad missing a control does not strand the run.
-  wq('wiz-skip').addEventListener('click', skipStep);
+  wq('wiz-skip').addEventListener('click', () => { note(''); skipStep(); });
 
   wq('wiz-abort').addEventListener('click', () => finish('wizard cancelled; bridge restarted'));
   wq('wiz-abort2').addEventListener('click', () => finish('discarded; bridge restarted'));
