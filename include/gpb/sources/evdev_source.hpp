@@ -34,14 +34,21 @@ class EvdevSource final : public InputSource {
   bool initialize(std::string& err) override;
   int fd() const override { return fd_; }
   bool read(GamepadState& out) override;
+  bool connected() const override { return fd_ >= 0; }
+  bool reconnect(std::string& err) override;
   void shutdown() override;
   const char* name() const override { return "evdev"; }
 
  private:
+  bool open_device(std::string& err);
   void bind_from_config(const Config& cfg);
   void autodetect_ranges();
   int16_t scale_axis(const AxisBinding& b, int32_t raw) const;
 
+  // The configured value, which may be a glob. Kept separate from the resolved path
+  // because a device that re-enumerates can come back as a different eventN, so a
+  // reconnect has to re-resolve the pattern rather than reuse the old node.
+  std::string pattern_;
   std::string path_;
   bool grab_ = false;
   int fd_ = -1;

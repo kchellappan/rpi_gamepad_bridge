@@ -42,6 +42,17 @@ class InputSource {
   // capture and inject are supposed to agree bit-for-bit.
   virtual bool emits_canonical() const { return false; }
 
+  // False once the underlying device has gone away. A source that can vanish must say so
+  // rather than reporting endless read errors: epoll re-fires EPOLLERR/EPOLLHUP
+  // immediately, so a source that merely logs and returns will spin at full tilt.
+  virtual bool connected() const { return true; }
+
+  // Try to re-acquire the device. Default: not supported, so the bridge gives up cleanly.
+  virtual bool reconnect(std::string& err) {
+    err = "source does not support reconnect";
+    return false;
+  }
+
   // Reverse channel. Default no-op so that sources with no motors ignore it for free.
   virtual void on_feedback(const FeedbackEvent&) {}
 

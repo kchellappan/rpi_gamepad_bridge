@@ -120,7 +120,7 @@ std::string evdev_key_name(uint16_t code) {
 }
 
 EvdevSource::EvdevSource(const Config& cfg) {
-  path_ = cfg.get("source.evdev.device");
+  pattern_ = cfg.get("source.evdev.device");
   grab_ = cfg.get_bool("source.evdev.grab", true);
   bind_from_config(cfg);
 }
@@ -197,10 +197,29 @@ static bool resolve_device_path(std::string& path, std::string& err) {
 }
 
 bool EvdevSource::initialize(std::string& err) {
-  if (path_.empty()) {
+  if (pattern_.empty()) {
     err = "source.evdev.device is not set (run gpb-discover to find it)";
     return false;
   }
+  if (axes_.empty() && buttons_.empty()) {
+    err = "no axis or button bindings configured";
+    return false;
+  }
+  return open_device(err);
+}
+
+bool EvdevSource::reconnect(std::string& err) {
+  shutdown();
+  // Start from a clean accumulator: whatever the pad was doing when it vanished is not
+  // what it is doing now.
+  acc_ = GamepadState{};
+  hat_x_ = hat_y_ = 0;
+  dirty_ = false;
+  return open_device(err);
+}
+
+bool EvdevSource::open_device(std::string& err) {
+  path_ = pattern_;
   if (!resolve_device_path(path_, err)) return false;
   fd_ = ::open(path_.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
   if (fd_ < 0) {
@@ -228,10 +247,6 @@ bool EvdevSource::initialize(std::string& err) {
     std::fprintf(stderr, "[evdev] opened \"%s\" (%zu axes, %zu buttons bound)\n", devname,
                  axes_.size(), buttons_.size());
 
-  if (axes_.empty() && buttons_.empty()) {
-    err = "no axis or button bindings configured for " + path_;
-    return false;
-  }
   return true;
 }
 
@@ -254,8 +269,16 @@ bool EvdevSource::read(GamepadState& out) {
     if (n < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) break;
       if (errno == EINTR) continue;
-      std::fprintf(stderr, "[evdev] read error: %s\n", std::strerror(errno));
-      break;
+      // Anything else means the device is gone -- ENODEV when it is unplugged or, as the
+      // Stadia controller does unprompted, re-enumerates. Drop the descriptor and report
+      // the disconnect ONCE. Logging and continuing would spin, because epoll keeps
+      // reporting EPOLLERR on a dead fd.
+      std::fprintf(stderr, "[evdev] device lost (%s); will try to reopen\n",
+                   std::strerror(errno));
+      if (grab_) ioctl(fd_, EVIOCGRAB, 0);
+      ::close(fd_);
+      fd_ = -1;
+      return false;
     }
     if (n == 0) break;
 

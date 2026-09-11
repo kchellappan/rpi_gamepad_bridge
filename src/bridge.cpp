@@ -99,8 +99,41 @@ int Bridge::run() {
   int registered_src_fd = -1;
   running_ = true;
   epoll_event events[8];
+  bool was_connected = true;
+  uint64_t next_retry_ns = 0;
+  const uint64_t kRetryIntervalNs = 500ull * 1000 * 1000;
 
   while (running_) {
+    // Device loss. The Stadia controller re-enumerates unprompted, so this is a normal
+    // operating condition rather than an error path, and must not spin or leak state.
+    if (!src_->connected()) {
+      if (was_connected) {
+        was_connected = false;
+        ++stats_.disconnects;
+        // Fail safe. Whatever was held when the device vanished must be released, or the
+        // console keeps seeing that button pressed forever -- a stuck input is far worse
+        // than a dropped one.
+        current_ = GamepadState{};
+        submit_current();
+        std::fprintf(stderr, "[bridge] source disconnected; output released to neutral\n");
+      }
+      if (registered_src_fd >= 0) {
+        ::epoll_ctl(epfd_, EPOLL_CTL_DEL, registered_src_fd, nullptr);
+        registered_src_fd = -1;
+      }
+      const uint64_t now = now_mono_ns();
+      if (now >= next_retry_ns) {
+        std::string rerr;
+        if (src_->reconnect(rerr)) {
+          ++stats_.reconnects;
+          was_connected = true;
+          std::fprintf(stderr, "[bridge] source reconnected\n");
+        } else {
+          next_retry_ns = now + kRetryIntervalNs;
+        }
+      }
+    }
+
     // A source's descriptor can change under us -- SocketSource switches from its
     // listening socket to the accepted client -- so reconcile before every wait.
     const int sfd = src_->fd();
@@ -118,7 +151,10 @@ int Bridge::run() {
       registered_src_fd = sfd;
     }
 
-    const int n = ::epoll_wait(epfd_, events, 8, 1000);
+    // Poll faster while disconnected so a reconnect is picked up promptly, but stay lazy
+    // in the normal case where every wakeup is driven by an actual event.
+    const int timeout_ms = src_->connected() ? 1000 : 100;
+    const int n = ::epoll_wait(epfd_, events, 8, timeout_ms);
     if (n < 0) {
       if (errno == EINTR) continue;
       std::fprintf(stderr, "[bridge] epoll_wait: %s\n", std::strerror(errno));
@@ -129,6 +165,11 @@ int Bridge::run() {
       const int fd = events[i].data.fd;
 
       if (fd == registered_src_fd) {
+        if (events[i].events & (EPOLLERR | EPOLLHUP)) {
+          // Surfaces on the next loop as !connected(); read() confirms the errno.
+          src_->read(current_);
+          continue;
+        }
         if (!src_->read(current_)) continue;   // partial batch; nothing coherent yet
         ++stats_.updates;
 
@@ -168,10 +209,12 @@ int Bridge::run() {
 
   std::fprintf(stderr,
                "[bridge] stopped: %llu updates, %llu submits, %llu coalesced, "
-               "%llu heartbeats\n",
+               "%llu heartbeats, %llu disconnects, %llu reconnects\n",
                (unsigned long long)stats_.updates, (unsigned long long)stats_.submits,
                (unsigned long long)stats_.coalesced,
-               (unsigned long long)stats_.heartbeats);
+               (unsigned long long)stats_.heartbeats,
+               (unsigned long long)stats_.disconnects,
+               (unsigned long long)stats_.reconnects);
   if (opts_.record)
     std::fprintf(stderr, "[bridge] capture: %llu written, %llu dropped\n",
                  (unsigned long long)recorder_.written(),

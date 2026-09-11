@@ -41,6 +41,8 @@ class Bridge {
     uint64_t coalesced = 0;     // updates that overwrote an undrained pending report
     uint64_t heartbeats = 0;
     uint64_t feedback = 0;
+    uint64_t disconnects = 0;
+    uint64_t reconnects = 0;
   };
   const Stats& stats() const { return stats_; }
 
