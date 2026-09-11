@@ -209,7 +209,9 @@ Verified against exactly one combination:
 Newer kernels are untested. Other controllers should work through the same `EvdevSource`
 after a wizard run, but only the Stadia has been exercised.
 
----
+## License
+
+[MIT](LICENSE).
 
 *Descriptor and gadget setup derive from prior art in
-[gdsports/NSGadget_Pi](https://github.com/gdsports/NSGadget_Pi).*
+[gdsports/NSGadget_Pi](https://github.com/gdsports/NSGadget_Pi), which is also MIT licensed.*
