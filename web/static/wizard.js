@@ -14,6 +14,8 @@ const W = {
   index: 0,
   mappings: [],       // {control, target, kind, code, invert}
   running: false,
+  gen: 0,             // invalidates an in-flight capture when the user moves on
+  abort: null,        // AbortController for the capture currently being awaited
 };
 
 const wq = (id) => document.getElementById(id);
@@ -117,11 +119,19 @@ function mark(box, chosen) {
   }
 }
 
+// Each step runs under a generation number. Skipping or cancelling bumps it and aborts the
+// request being awaited, so a capture that completes afterwards recognises that it has been
+// superseded and does nothing.
+//
+// Without that, Skip could only set the index -- the in-flight capture kept running, so the
+// button looked dead until the full timeout elapsed, and the late response then advanced the
+// index a second time and silently skipped an extra control.
 async function nextStep() {
   if (!W.running) return;
   if (W.index >= W.steps.length) return toSave();
 
   const step = W.steps[W.index];
+  const gen = ++W.gen;
   wq('wiz-prompt').textContent = step.prompt;
   wq('wiz-progress').textContent = `${W.index + 1} of ${W.steps.length}  ·  ${step.control.label}`;
   markDiagram();
@@ -129,22 +139,25 @@ async function nextStep() {
   // Exclude codes already bound, so a control that answered an earlier prompt cannot answer
   // this one too -- the same rule the terminal wizard enforces.
   const exclude = W.mappings.map((m) => m.code);
+  W.abort = new AbortController();
   let res;
   try {
     res = await api('/api/wizard/capture', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: W.abort.signal,
       body: JSON.stringify({
         device: W.device, kind: step.control.capture || 'any',
         timeout_ms: 8000, exclude,
       }),
     });
   } catch (e) {
+    if (gen !== W.gen) return;          // aborted deliberately; a newer step owns the flow
     toast('capture failed: ' + e, true);
     W.running = false;
     return;
   }
-  if (!W.running) return;
+  if (gen !== W.gen || !W.running) return;   // superseded while we were waiting
 
   if (res.ok) {
     const targetName = (res.kind === 'axis' && step.control.target_axis)
@@ -155,6 +168,18 @@ async function nextStep() {
       kind: res.kind, code: res.code, invert: res.invert,
     });
   }
+  W.index += 1;
+  nextStep();
+}
+
+function abortInFlight() {
+  W.gen += 1;
+  if (W.abort) { W.abort.abort(); W.abort = null; }
+}
+
+function skipStep() {
+  if (!W.running) return;
+  abortInFlight();
   W.index += 1;
   nextStep();
 }
@@ -172,6 +197,7 @@ function toSave() {
 
 async function finish(message) {
   W.running = false;
+  abortInFlight();
   try { await api('/api/wizard/finish', { method: 'POST' }); } catch (e) { /* reported below */ }
   wq('wizard').hidden = true;
   if (message) toast(message);
@@ -200,7 +226,7 @@ function wireWizard() {
   });
 
   // Skipping advances without recording, so a pad missing a control does not strand the run.
-  wq('wiz-skip').addEventListener('click', () => { W.index += 1; });
+  wq('wiz-skip').addEventListener('click', skipStep);
 
   wq('wiz-abort').addEventListener('click', () => finish('wizard cancelled; bridge restarted'));
   wq('wiz-abort2').addEventListener('click', () => finish('discarded; bridge restarted'));

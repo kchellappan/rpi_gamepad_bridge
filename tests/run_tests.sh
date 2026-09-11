@@ -187,7 +187,51 @@ print(' '.join(d[i:i+8].hex() for i in range(0,len(d)//8*8,8)))")"
   fi
 fi
 
-# ---------------------------------------------------------------- 6. no dependency creep
+# ---------------------------------------------------------------- 6. static web assets
+echo "web assets"
+JS_OK=1
+if command -v node >/dev/null 2>&1; then
+  for f in web/static/*.js; do
+    node --check "$f" 2>&1 | sed "s|^|        |" || JS_OK=0
+  done
+  [[ $JS_OK -eq 1 ]] && ok "javascript parses" || bad "javascript has a syntax error" "see above"
+else
+  echo "  SKIP  node not available to parse the javascript"
+fi
+
+# The browser's own [hidden] rule is a UA style, so any class selector setting `display`
+# silently outranks it. That shipped once: .overlay{display:flex} made the wizard modal
+# impossible to hide, so it covered the page from first paint and blocked every click --
+# including its own Close button. The global override is what prevents a repeat.
+if grep -qE '^\[hidden\] \{ display: none !important; \}' web/static/style.css; then
+  ok "[hidden] is authoritative in css"
+else
+  bad "the global [hidden] override is missing from style.css" \
+      "without it any class setting display can make an element unhideable"
+fi
+
+# Every element id the scripts reach for must actually exist in the markup: a typo there
+# produces a null dereference that silently kills the rest of the script.
+MISSING="$(python3 - <<'PYCHK'
+import re, pathlib
+html = pathlib.Path("web/static/index.html").read_text()
+ids = set(re.findall(r'id="([^"]+)"', html))
+missing = []
+for js in sorted(pathlib.Path("web/static").glob("*.js")):
+    body = js.read_text()
+    for ref in sorted(set(re.findall(r"(?:\$|wq)\('([^']+)'\)", body))):
+        if ref not in ids:
+            missing.append(f"{js.name}:#{ref}")
+print(" ".join(missing))
+PYCHK
+)"
+if [[ -z "$MISSING" ]]; then
+  ok "every element id the scripts reach for exists in the markup"
+else
+  bad "scripts reference ids that are not in index.html" "$MISSING"
+fi
+
+# ---------------------------------------------------------------- 7. no dependency creep
 echo "python dependency check"
 if OUT="$(python3 tests/check_stdlib_only.py 2>&1)"; then
   echo "$OUT"; PASS=$((PASS+1))

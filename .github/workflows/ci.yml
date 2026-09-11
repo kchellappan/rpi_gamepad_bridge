@@ -27,6 +27,8 @@ jobs:
 
       - name: Test
         run: ./tests/run_tests.sh
+        # Runners ship node, so the javascript syntax check inside the suite actually runs
+        # here even though it skips on machines without it.
 
   build-without-cmake:
     name: Build via g++ fallback
