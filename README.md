@@ -62,7 +62,11 @@ sudo ./scripts/enable_gadget_mode.sh   # puts the USB-C port in peripheral mode
 sudo reboot
 
 sudo ./scripts/install_services.sh  # gadget + bridge, started at boot
+sudo ./scripts/install_web.sh       # control panel on :8080
 ```
+
+The install script prints a URL and a generated password. From there you can do most things
+without SSH — see [Web control panel](#web-control-panel).
 
 Then teach it your controller's layout and point the config at the result:
 
@@ -88,6 +92,27 @@ sudo ./build/gpbridge --config config/stadia_to_switch.ini --record session.bin
 # drive it from an application, or replay a capture, over a Unix socket
 sudo ./build/gpbridge --config config/stadia_to_switch.ini --source socket
 ```
+
+## Web control panel
+
+`http://<host>.local:8080/` — start, stop and restart the bridge, pick a config, switch
+between controller and socket mode, and read the log, without SSH.
+
+It runs as its own service (`gpb-web`), deliberately separate from `gpbridge`: the bridge is
+a real-time loop and has no business hosting an HTTP server, and a process cannot cleanly
+restart itself. It also stays up while the bridge is stopped, which is half of what it is for.
+
+- **Auth** is HTTP basic, with a password generated at install and stored in
+  `/etc/gpbridge/webpass`. Any username works.
+- **Privileges** come from a narrow sudoers rule covering four specific `systemctl` calls and
+  reading the bridge's journal — the server itself runs unprivileged.
+- **Selection** is written to `/etc/gpbridge/active.env`, which the `gpbridge` unit reads.
+  The `.ini` files stay the source of truth, so the panel and SSH never disagree.
+
+Changing a config restarts the bridge but leaves the USB device in place, so the console sees
+a brief gap in reports rather than a controller disconnect. The **Re-enumerate gadget** button
+exists for when something has genuinely wedged; it is never triggered automatically, because
+re-enumeration *does* show the console a disconnect.
 
 ## Configuration
 
@@ -183,6 +208,7 @@ here unlocks them without the licensed silicon.
 | `gpbridge` | The bridge itself |
 | `gpb-discover` | `list` devices, dump `caps`, or run the mapping `wizard` |
 | `gpb-fakepad` | A uinput-backed virtual gamepad, for testing without hardware |
+| `web/gpb_web.py` | The control panel; standard library only, no pip |
 
 ## Tests
 
