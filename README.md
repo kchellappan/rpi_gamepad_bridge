@@ -260,17 +260,25 @@ imports outside the standard library. CI runs all of it on every push.
 
 ## Verified configuration
 
-Verified against exactly one combination:
-
 | | |
 |---|---|
 | Board | Raspberry Pi 5 Model B Rev 1.0 |
 | OS | Raspberry Pi OS Bookworm, `2024-11-19` arm64, kernel `6.6.51` |
-| Controller | Google Stadia Controller rev. A, wired |
+| Controllers | Google Stadia Controller rev. A, and Sony DualSense (PS5) — both wired |
 | Console | Nintendo Switch 2, via the official dock |
 
-Newer kernels are untested. Other controllers should work through the same `EvdevSource`
-after a wizard run, but only the Stadia has been exercised.
+Both controllers pass the console's own controller test on sticks and buttons. The DualSense
+was mapped entirely through the web wizard with no code changes for the pad itself, which is
+the `EvdevSource` abstraction doing what it is for.
+
+Its layout differs from the Stadia's in ways worth knowing, because those differences are
+what surfaced several bugs: its d-pad arrives as a **hat** rather than four buttons, its
+triggers bind **digitally** as `BTN_TL2`/`BTN_TR2` rather than as analog axes, and it has no
+control to spare for Capture — its Create button reports `BTN_SELECT`, which is already
+Minus.
+
+Newer kernels are untested, and every further controller is an untested case until someone
+runs the wizard on it.
 
 ## License
 
