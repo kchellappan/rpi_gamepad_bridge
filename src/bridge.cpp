@@ -99,7 +99,9 @@ int Bridge::run() {
   int registered_src_fd = -1;
   running_ = true;
   epoll_event events[8];
-  bool was_connected = true;
+  // Seed from reality rather than assuming: the source may legitimately have started
+  // without its device, in which case this is not a "disconnect" to announce.
+  bool was_connected = src_->connected();
   uint64_t next_retry_ns = 0;
   const uint64_t kRetryIntervalNs = 500ull * 1000 * 1000;
 

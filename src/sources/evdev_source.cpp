@@ -205,7 +205,19 @@ bool EvdevSource::initialize(std::string& err) {
     err = "no axis or button bindings configured";
     return false;
   }
-  return open_device(err);
+
+  // A missing device is NOT a startup failure.
+  //
+  // Running as a boot service, this will routinely start before the controller is plugged
+  // in -- and exiting then just produces a restart loop that ends the moment someone
+  // happens to plug in, which is a worse version of waiting. We already know how to wait
+  // for a device that vanishes mid-run; the same path handles one that was never there.
+  //
+  // Config errors above still fail hard, because no amount of waiting fixes those.
+  std::string oerr;
+  if (!open_device(oerr))
+    std::fprintf(stderr, "[evdev] %s -- waiting for it to appear\n", oerr.c_str());
+  return true;
 }
 
 bool EvdevSource::reconnect(std::string& err) {
