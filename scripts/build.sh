@@ -18,7 +18,10 @@ CORE_SRC=(
   src/sinks/ns_hid_sink.cpp
 )
 
-if command -v cmake >/dev/null 2>&1; then
+# USE_CMAKE=0 forces the fallback. CI uses it to keep that path exercised on runners that
+# do have cmake -- shadowing the binary does not work, since the fallback is selected by
+# `command -v` finding nothing rather than by cmake failing.
+if [[ "${USE_CMAKE:-1}" != "0" ]] && command -v cmake >/dev/null 2>&1; then
   echo "==> cmake build (${BUILD_TYPE}, -j${JOBS})"
   cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" >/dev/null
   cmake --build "$BUILD_DIR" -j"$JOBS"
