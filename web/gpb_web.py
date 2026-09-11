@@ -38,6 +38,7 @@ CONFIG_DIR = REPO / "config"
 TARGET_DIR = REPO / "targets"
 STATUS_FILE = Path(os.environ.get("GPB_STATUS", "/var/lib/gpbridge/status.json"))
 DISCOVER = REPO / "build" / "gpb-discover"
+LATENCY = REPO / "build" / "gpb-latency"
 
 BRIDGE_UNIT = "gpbridge.service"
 GADGET_UNIT = "gpb-gadget.service"
@@ -469,6 +470,71 @@ def delete_config(path_str: str) -> tuple[bool, str]:
     return True, "deleted"
 
 
+# --------------------------------------------------------------------------- latency
+
+# The gadget presents itself with these IDs, so this is how the Pi recognises its own gadget
+# when the OTG data leg is looped back into one of its USB-A ports.
+GADGET_VID_PID = "0f0d:00c1"
+
+
+def find_loopback_pad() -> dict:
+    """Locate the Pi's own gadget, seen as an ordinary USB gamepad.
+
+    Returns the evdev node if the loopback cable is in place. Its absence is the normal
+    state -- the cable is usually in a console -- so this is a question, not an error.
+    """
+    by_id = Path("/dev/input/by-id")
+    if by_id.is_dir():
+        for link in sorted(by_id.iterdir()):
+            # The gadget's product string is what udev builds the by-id name from.
+            if "NSGamepad" in link.name and link.name.endswith("event-joystick"):
+                try:
+                    return {"found": True, "path": str(link), "event": str(link.resolve())}
+                except OSError:
+                    continue
+
+    # udev may not have produced a by-id link; fall back to matching the device name.
+    for node in sorted(Path("/dev/input").glob("event*")):
+        try:
+            with open(node, "rb", buffering=0) as fh:
+                import fcntl as _fcntl
+                buf = bytearray(256)
+                _fcntl.ioctl(fh, (2 << 30) | (256 << 16) | (0x45 << 8) | 0x06, buf)
+                if b"NSGamepad" in buf:
+                    return {"found": True, "path": str(node), "event": str(node)}
+        except OSError:
+            continue
+    return {"found": False}
+
+
+def run_latency(device: str, samples: int) -> dict:
+    if not LATENCY.is_file():
+        return {"ok": False, "error": "gpb-latency is not built"}
+    sock = "/run/gpbridge.sock"
+    # Read the socket path the running config actually uses rather than assuming the default.
+    try:
+        cfg = Path(read_env()["GPB_CONFIG"])
+        section = ""
+        for line in cfg.read_text().splitlines():
+            line = line.split("#", 1)[0].split(";", 1)[0].strip()
+            if line.startswith("["):
+                section = line.strip("[]").strip()
+            elif section == "source.socket" and line.startswith("path"):
+                sock = line.split("=", 1)[1].strip()
+    except (OSError, KeyError, IndexError):
+        pass
+
+    rc, out = run([str(LATENCY), "--device", device, "--socket", sock,
+                   "--samples", str(samples)], timeout=max(60, samples // 2 + 30))
+    for line in out.splitlines():
+        if line.strip().startswith("{"):
+            try:
+                return json.loads(line.strip())
+            except json.JSONDecodeError:
+                break
+    return {"ok": False, "error": out.strip() or f"measurement failed (rc={rc})"}
+
+
 # --------------------------------------------------------------------------- auth
 
 def load_credentials() -> tuple[str, str | None]:
@@ -570,6 +636,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("wizard.js", "application/javascript")
         if path == "/mapping.js":
             return self._static("mapping.js", "application/javascript")
+        if path == "/latency.js":
+            return self._static("latency.js", "application/javascript")
         self._send(HTTPStatus.NOT_FOUND, b'{"error":"not found"}')
 
     def do_POST(self):
@@ -593,6 +661,33 @@ class Handler(BaseHTTPRequestHandler):
             # leaves the USB device in place.
             rc, out = systemctl("restart", GADGET_UNIT)
             return self._json({"ok": rc == 0, "message": out.strip() or "gadget re-enumerated"})
+
+        if path == "/api/latency/detect":
+            return self._json(find_loopback_pad())
+
+        if path == "/api/latency/run":
+            pad = find_loopback_pad()
+            if not pad.get("found"):
+                return self._json({"ok": False,
+                                   "error": "the loopback cable is not connected"})
+            samples = max(10, min(int(payload.get("samples", 60)), 300))
+
+            # Measuring drives the bridge through its socket, so the source has to be
+            # switched and put back. Restoring in a finally-equivalent path matters: leaving
+            # someone in socket mode would look exactly like a dead controller.
+            env = read_env()
+            previous = env["GPB_SOURCE"]
+            try:
+                write_env(env["GPB_CONFIG"], "socket")
+                systemctl("restart", BRIDGE_UNIT)
+                import time as _time
+                _time.sleep(1.5)
+                result = run_latency(pad["event"], samples)
+            finally:
+                write_env(env["GPB_CONFIG"], previous)
+                systemctl("restart", BRIDGE_UNIT)
+            result["restored_source"] = previous
+            return self._json(result)
 
         if path == "/api/wizard/begin":
             # The bridge grabs the controller exclusively, so it has to let go before the

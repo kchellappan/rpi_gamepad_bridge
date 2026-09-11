@@ -149,6 +149,30 @@ Capture runs in `gpb-discover`, not in the web server, so the wizard and the ter
 one implementation of the parts that were hard to get right — resting baselines, the
 observed-axis rule, and rejecting an `absinfo` value that falls outside the axis's own range.
 
+### Latency measurement
+
+The panel can measure the real input-to-output time. It needs a **loopback**: move the OTG
+cable's data leg from the console into one of the Pi's own USB-A ports. `dwc2` (device) and
+RP1 (host) are independent controllers, so the Pi enumerates its own gadget and can watch
+what it sends.
+
+The page walks through the setup, notices the loopback appearing, runs the samples, and puts
+your input source back afterwards.
+
+What it measures is the whole chain **except the controller**:
+
+```
+socket -> bridge -> encode -> /dev/hidg0 -> USB -> host -> evdev
+```
+
+The controller's own latency is not included and cannot be, because nothing in software can
+press a physical button — that needs a GPIO bridged across a button's contacts. The results
+say so rather than quietly presenting a flattering number.
+
+Expect roughly **1 ms**. The gadget's endpoint is polled once per millisecond at high speed,
+so that is the floor, and the histogram showing the distribution piled against it is the
+evidence that the interval dominates rather than anything in software.
+
 ## Configuration
 
 One INI file selects the source and sink, maps the controller, and shapes the sticks. Two
@@ -252,6 +276,7 @@ here unlocks them without the licensed silicon.
 | `gpbridge` | The bridge itself |
 | `gpb-discover` | `list` devices, dump `caps`, or run the mapping `wizard` |
 | `gpb-fakepad` | A uinput-backed virtual gamepad, for testing without hardware |
+| `gpb-latency` | Loopback latency measurement; the panel drives it |
 | `web/gpb_web.py` | The control panel; standard library only, no pip |
 
 ## Tests

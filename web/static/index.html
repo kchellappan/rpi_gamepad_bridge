@@ -96,6 +96,19 @@
   <section class="panel">
     <div class="panel-head row">
       <div>
+        <h2>Latency</h2>
+        <p class="hint">Measure the real input-to-output time, end to end.</p>
+      </div>
+      <button id="lat-open" class="btn">Measure</button>
+    </div>
+    <p class="hint">Needs a loopback: the OTG data leg moved from the console into one of the
+      Pi's own USB-A ports. The bridge is switched to socket mode during the run and put back
+      afterwards.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head row">
+      <div>
         <h2>Logs</h2>
         <p class="hint">journalctl &mdash; gpbridge.service</p>
       </div>
@@ -170,9 +183,64 @@
   </div>
 </div>
 
+<div id="latency" class="overlay" hidden>
+  <div class="sheet">
+    <header class="sheet-head">
+      <div>
+        <h2>Latency measurement</h2>
+        <p class="hint" id="lat-sub">&nbsp;</p>
+      </div>
+      <button id="lat-close" class="btn btn-quiet">Close</button>
+    </header>
+    <div class="sheet-body">
+      <div id="lat-setup" class="wiz-step">
+        <ol class="steps">
+          <li>Unplug the OTG cable's <strong>data leg</strong> from the console.</li>
+          <li>Plug it into a <strong>free USB-A port on the Pi itself</strong>. The Pi then
+              enumerates its own gadget and can watch what it sends.</li>
+          <li>Leave the power leg alone.</li>
+        </ol>
+        <p class="wiz-note" id="lat-detect">Looking for the loopback…</p>
+        <p class="warn-box">The run switches the bridge to socket mode and restarts it, then
+          puts your setting back. The console receives nothing while it runs.</p>
+        <div class="actions">
+          <button id="lat-run" class="btn btn-primary" disabled>Run measurement</button>
+          <label class="check">Samples
+            <select id="lat-samples" class="input" style="width:auto;margin-left:.4rem">
+              <option>30</option><option selected>60</option><option>120</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div id="lat-running" class="wiz-step" hidden>
+        <p class="prompt">Measuring…</p>
+        <p class="hint" id="lat-progress">Injecting inputs and timing when the host sees them.</p>
+      </div>
+
+      <div id="lat-results" class="wiz-step" hidden>
+        <div class="stat-row">
+          <div class="stat"><span class="stat-v" id="lat-p50">—</span><span class="stat-k">median</span></div>
+          <div class="stat"><span class="stat-v" id="lat-min">—</span><span class="stat-k">best</span></div>
+          <div class="stat"><span class="stat-v" id="lat-p95">—</span><span class="stat-k">95th pct</span></div>
+          <div class="stat"><span class="stat-v" id="lat-max">—</span><span class="stat-k">worst</span></div>
+        </div>
+        <svg id="lat-chart" class="chart" role="img" aria-label="latency distribution"></svg>
+        <p class="hint" id="lat-detail">&nbsp;</p>
+        <p class="wiz-note" id="lat-interp"></p>
+        <div class="actions">
+          <button id="lat-again" class="btn">Run again</button>
+          <button id="lat-done" class="btn btn-primary">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="/mapping.js"></script>
 <script src="/app.js"></script>
 <script src="/wizard.js"></script>
+<script src="/latency.js"></script>
 </body>
 </html>
