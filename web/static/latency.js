@@ -31,51 +31,76 @@ async function detectLoopback() {
 }
 
 // A histogram says more than a mean here: USB polling quantises the result, so the shape is
-// the evidence that the interval dominates rather than something in software.
+// the evidence that the interval dominates rather than something in software. Which only
+// works if the reader can tell what the bars are worth, so it gets real axes.
 function drawHistogram(samples, id) {
   const svg = lq(id || 'lat-chart');
   svg.innerHTML = '';
   if (!samples || !samples.length) return;
-  const W = 520, H = 120, pad = 18;
+
+  const W = 560, H = 160;
+  const padL = 38, padR = 12, padT = 12, padB = 30;
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
 
   const lo = Math.min(...samples), hi = Math.max(...samples);
-  const span = Math.max(hi - lo, 0.2);
-  const bins = 24;
+  // Use the real range. Padding it out to some minimum would push a tight cluster into a
+  // corner and misrepresent exactly the case this is most often looking at.
+  const span = Math.max(hi - lo, 1e-3);
+  const bins = Math.min(28, Math.max(8, Math.round(Math.sqrt(samples.length) * 2)));
   const counts = new Array(bins).fill(0);
   for (const v of samples) {
     counts[Math.min(bins - 1, Math.floor(((v - lo) / span) * bins))] += 1;
   }
   const peak = Math.max(...counts, 1);
-  const bw = (W - pad * 2) / bins;
+  const bw = plotW / bins;
+
+  const el = (name, attrs, text) => {
+    const n = document.createElementNS('http://www.w3.org/2000/svg', name);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+    if (text !== undefined) n.textContent = text;
+    svg.appendChild(n);
+    return n;
+  };
+
+  // Horizontal guides first, so bars sit on top of them.
+  const yTicks = peak <= 4 ? [0, peak] : [0, Math.round(peak / 2), peak];
+  for (const t of yTicks) {
+    const y = padT + plotH - (t / peak) * plotH;
+    el('line', { class: 'grid', x1: padL, x2: W - padR, y1: y, y2: y });
+    el('text', { class: 'tick', x: padL - 6, y: y + 3, 'text-anchor': 'end' }, String(t));
+  }
 
   counts.forEach((c, i) => {
-    const h = (c / peak) * (H - pad * 2);
-    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    r.setAttribute('class', 'bar');
-    r.setAttribute('x', String(pad + i * bw + 1));
-    r.setAttribute('y', String(H - pad - h));
-    r.setAttribute('width', String(Math.max(bw - 2, 1)));
-    r.setAttribute('height', String(h));
-    r.setAttribute('rx', '2');
-    svg.appendChild(r);
+    if (!c) return;
+    const h = (c / peak) * plotH;
+    el('rect', {
+      class: 'bar', x: padL + i * bw + 0.5, y: padT + plotH - h,
+      width: Math.max(bw - 1, 1), height: h, rx: 1.5,
+    });
   });
 
-  const axis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-  axis.setAttribute('class', 'axis');
-  axis.setAttribute('x1', String(pad)); axis.setAttribute('x2', String(W - pad));
-  axis.setAttribute('y1', String(H - pad)); axis.setAttribute('y2', String(H - pad));
-  svg.appendChild(axis);
+  el('line', { class: 'axis', x1: padL, x2: W - padR, y1: padT + plotH, y2: padT + plotH });
 
-  for (const [frac, val] of [[0, lo], [1, hi]]) {
-    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    t.setAttribute('class', 'tick');
-    t.setAttribute('x', String(pad + frac * (W - pad * 2)));
-    t.setAttribute('y', String(H - 4));
-    t.setAttribute('text-anchor', frac ? 'end' : 'start');
-    t.textContent = `${val.toFixed(2)} ms`;
-    svg.appendChild(t);
+  // Five x labels across the real range, at whatever precision distinguishes them. A
+  // distribution this tight is unreadable at two decimals.
+  const stepDigits = span / 4 < 0.02 ? 3 : 2;
+  for (let i = 0; i <= 4; i++) {
+    const frac = i / 4;
+    const x = padL + frac * plotW;
+    const value = lo + frac * span;
+    el('line', { class: 'axis', x1: x, x2: x, y1: padT + plotH, y2: padT + plotH + 4 });
+    el('text', {
+      class: 'tick', x, y: padT + plotH + 15,
+      'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle',
+    }, value.toFixed(stepDigits));
   }
+  el('text', { class: 'tick axis-label', x: padL + plotW / 2, y: H - 2,
+               'text-anchor': 'middle' }, 'milliseconds');
+  el('text', { class: 'tick axis-label', x: 10, y: padT + plotH / 2,
+               'text-anchor': 'middle',
+               transform: `rotate(-90 10 ${padT + plotH / 2})` }, 'samples');
 }
 
 function interpret(r) {
