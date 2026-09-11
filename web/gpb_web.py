@@ -508,6 +508,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"targets": list_targets()})
         if path == "/wizard.js":
             return self._static("wizard.js", "application/javascript")
+        if path == "/mapping.js":
+            return self._static("mapping.js", "application/javascript")
         self._send(HTTPStatus.NOT_FOUND, b'{"error":"not found"}')
 
     def do_POST(self):

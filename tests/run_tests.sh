@@ -222,8 +222,18 @@ if command -v node >/dev/null 2>&1; then
     node --check "$f" 2>&1 | sed "s|^|        |" || JS_OK=0
   done
   [[ $JS_OK -eq 1 ]] && ok "javascript parses" || bad "javascript has a syntax error" "see above"
+
+  # Target resolution is the one part of the wizard that is logic rather than rendering, so
+  # it is worth unit testing. It has been wrong twice on real hardware.
+  if MAPOUT="$(node tests/test_mapping.js 2>&1)"; then
+    echo "$MAPOUT" | sed "s|^  |  |"
+    PASS=$((PASS + $(grep -c 'PASS' <<<"$MAPOUT")))
+  else
+    echo "$MAPOUT"
+    FAIL=$((FAIL + $(grep -c 'FAIL' <<<"$MAPOUT")))
+  fi
 else
-  echo "  SKIP  node not available to parse the javascript"
+  echo "  SKIP  node not available to parse or unit-test the javascript"
 fi
 
 # The browser's own [hidden] rule is a UA style, so any class selector setting `display`

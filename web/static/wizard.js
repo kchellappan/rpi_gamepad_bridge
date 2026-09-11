@@ -185,28 +185,14 @@ async function nextStep(keepNote) {
   }
 
   if (res.ok) {
-    const hat = /^ABS_HAT0[XY]$/.test(res.code);
-    let targetName = step.target;
-    let invert = res.invert;
-
-    if (res.kind === 'axis') {
-      if (hat) {
-        // Many pads report the d-pad as a hat. It binds as an AXIS pair, not as four
-        // button targets: writing `axis.ABS_HAT0Y = dup` produces a binding EvdevSource
-        // has no axis target for, so it is silently dropped and the d-pad simply does not
-        // exist. Direction comes from the hat's own sign, so no invert either.
-        targetName = res.code.endsWith('X') ? 'hatx' : 'haty';
-        invert = false;
-      } else if (step.control.target_axis) {
-        targetName = step.control.target_axis;   // e.g. an analog trigger answering ZL
-      } else {
-        // An axis answered a prompt with no axis equivalent. Recording it would emit a
-        // binding that cannot work, so decline it and retry the same step.
-        note(`${step.control.label} needs a button, but that was an axis (${res.code}). `
-           + `Try a button, or Skip.`);
-        return nextStep(true);
-      }
+    const resolved = resolveTarget(step, res);
+    if (resolved.error) {
+      // Retry the same step: the user wants this target mapped, not skipped.
+      note(`${resolved.error} Try a button, or Skip.`);
+      return nextStep(true);
     }
+    const targetName = resolved.target;
+    const invert = resolved.invert;
 
     W.mappings.push({
       control: step.control.id, highlight: step.control.highlight,
