@@ -192,25 +192,43 @@ echo "web control panel"
 WEBPORT=$(( 18000 + RANDOM % 2000 ))
 printf 'GPB_CONFIG=%s/config/stadia_to_switch.ini\nGPB_SOURCE=evdev\n' "$PWD" > "$TMP/active.env"
 echo "testsecret" > "$TMP/webpass"
-GPB_REPO="$PWD" GPB_ENVFILE="$TMP/active.env" GPB_PASSFILE="$TMP/webpass" GPB_PORT=$WEBPORT \
+echo "admin" > "$TMP/webuser"
+GPB_REPO="$PWD" GPB_ENVFILE="$TMP/active.env" GPB_PASSFILE="$TMP/webpass" \
+GPB_USERFILE="$TMP/webuser" GPB_PORT=$WEBPORT \
   python3 web/gpb_web.py > "$TMP/web.log" 2>&1 &
 WPID=$!
 for _ in $(seq 1 40); do
-  curl -fsS -o /dev/null -u x:testsecret "http://127.0.0.1:$WEBPORT/api/status" 2>/dev/null && break
+  curl -fsS -o /dev/null -u admin:testsecret "http://127.0.0.1:$WEBPORT/api/status" 2>/dev/null && break
   sleep 0.25
 done
 
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 BASE="http://127.0.0.1:$WEBPORT"
 
-if [[ "$(code "$BASE/")" == "401" && "$(code -u x:wrong "$BASE/")" == "401" \
-   && "$(code -u x:testsecret "$BASE/")" == "200" ]]; then
-  ok "authentication is enforced on the page"
+if [[ "$(code "$BASE/")" == "401" && "$(code -u admin:wrong "$BASE/")" == "401" \
+   && "$(code -u nobody:testsecret "$BASE/")" == "401" \
+   && "$(code -u admin:testsecret "$BASE/")" == "200" ]]; then
+  ok "both username and password are enforced"
 else
-  bad "auth did not behave as expected" "anon=$(code "$BASE/") wrong=$(code -u x:wrong "$BASE/") ok=$(code -u x:testsecret "$BASE/")"
+  bad "auth did not behave as expected" \
+      "anon=$(code "$BASE/") badpass=$(code -u admin:wrong "$BASE/") baduser=$(code -u nobody:testsecret "$BASE/") ok=$(code -u admin:testsecret "$BASE/")"
 fi
 
-if curl -fsS -u x:testsecret "$BASE/api/status" | python3 -c "
+# Credentials are read per request rather than cached at startup. Caching meant editing the
+# password file did nothing until someone restarted the service -- a silent failure that
+# looks exactly like a successful rotation.
+echo "rotated" > "$TMP/webpass"
+echo "operator" > "$TMP/webuser"
+if [[ "$(code -u admin:testsecret "$BASE/")" == "401" \
+   && "$(code -u operator:rotated "$BASE/")" == "200" ]]; then
+  ok "rotating the credential files takes effect without a restart"
+else
+  bad "credential rotation did not take effect live" \
+      "old=$(code -u admin:testsecret "$BASE/") new=$(code -u operator:rotated "$BASE/")"
+fi
+echo "testsecret" > "$TMP/webpass"; echo "admin" > "$TMP/webuser"
+
+if curl -fsS -u admin:testsecret "$BASE/api/status" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 assert 'bridge' in d and 'udc' in d and 'configs' in d and 'active' in d
@@ -218,14 +236,14 @@ assert any(c['name'].endswith('.ini') for c in d['configs']), 'no configs listed
 " 2>/dev/null; then
   ok "status endpoint reports services, USB state and available configs"
 else
-  bad "status endpoint malformed" "$(curl -s -u x:testsecret "$BASE/api/status" | head -c 200)"
+  bad "status endpoint malformed" "$(curl -s -u admin:testsecret "$BASE/api/status" | head -c 200)"
 fi
 
 # The selected config must be one of the known files: an arbitrary path is a file-disclosure
 # and arbitrary-exec hazard, since whatever is named here is handed to the service.
-REJECT="$(curl -s -u x:testsecret -X POST -H 'Content-Type: application/json' \
+REJECT="$(curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' \
   -d '{"config":"/etc/shadow","source":"evdev","restart":false}' "$BASE/api/select")"
-REJECT2="$(curl -s -u x:testsecret -X POST -H 'Content-Type: application/json' \
+REJECT2="$(curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' \
   -d "{\"config\":\"$PWD/config/stadia_to_switch.ini\",\"source\":\"pwn\",\"restart\":false}" "$BASE/api/select")"
 if grep -q '"ok": false' <<<"$REJECT" && grep -q '"ok": false' <<<"$REJECT2"; then
   ok "config and source selections are validated against an allowlist"

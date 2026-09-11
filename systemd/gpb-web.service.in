@@ -14,6 +14,8 @@ ExecStart=/usr/bin/python3 @REPO@/web/gpb_web.py
 Environment=GPB_REPO=@REPO@
 Environment=GPB_ENVFILE=@ENVFILE@
 Environment=GPB_PORT=@PORT@
+Environment=GPB_PASSFILE=/etc/gpbridge/webpass
+Environment=GPB_USERFILE=/etc/gpbridge/webuser
 Restart=always
 RestartSec=3
 

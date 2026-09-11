@@ -62,7 +62,7 @@ sudo ./scripts/enable_gadget_mode.sh   # puts the USB-C port in peripheral mode
 sudo reboot
 
 sudo ./scripts/install_services.sh  # gadget + bridge, started at boot
-sudo ./scripts/install_web.sh       # control panel on :8080
+sudo ./scripts/install_web.sh --user you   # control panel on :8080
 ```
 
 The install script prints a URL and a generated password. From there you can do most things
@@ -102,8 +102,15 @@ It runs as its own service (`gpb-web`), deliberately separate from `gpbridge`: t
 a real-time loop and has no business hosting an HTTP server, and a process cannot cleanly
 restart itself. It also stays up while the bridge is stopped, which is half of what it is for.
 
-- **Auth** is HTTP basic, with a password generated at install and stored in
-  `/etc/gpbridge/webpass`. Any username works.
+- **Auth** is HTTP basic. The username lives in `/etc/gpbridge/webuser` (default `admin`)
+  and the password in `/etc/gpbridge/webpass`, generated at install. Both are read on every
+  request, so changing them takes effect immediately:
+
+  ```bash
+  sudo ./scripts/install_web.sh --set-password        # or --set-password mysecret
+  sudo ./scripts/install_web.sh --set-user karthik
+  sudo ./scripts/install_web.sh --show                # print the URL and current username
+  ```
 - **Privileges** come from a narrow sudoers rule covering four specific `systemctl` calls and
   reading the bridge's journal — the server itself runs unprivileged.
 - **Selection** is written to `/etc/gpbridge/active.env`, which the `gpbridge` unit reads.
@@ -121,6 +128,7 @@ One INI file selects the source and sink, maps the controller, and shapes the st
 
 | Key | Meaning |
 |---|---|
+| `meta.name` / `meta.description` | Human-readable label shown in the control panel; falls back to the filename |
 | `bridge.source` / `bridge.sink` | Which implementations to use (`evdev`, `socket` / `ns_hid`) |
 | `bridge.record_path` | Capture destination; empty disables recording |
 | `bridge.rt_priority`, `bridge.cpu_affinity` | Optional `SCHED_FIFO` priority and core pinning |

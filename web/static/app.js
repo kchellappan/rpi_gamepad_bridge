@@ -7,6 +7,12 @@ let lastConfigSignature = '';
 
 const $ = (id) => document.getElementById(id);
 
+// Config values are read from files on disk and interpolated into markup below. Escaping
+// them is not optional: a device path or description containing markup would otherwise be
+// injected straight into the page.
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
@@ -75,13 +81,15 @@ function renderStatus(s) {
       const el = document.createElement('label');
       el.className = 'option';
       el.setAttribute('role', 'radio');
+      const facts = [c.sink && 'sink: ' + c.sink,
+                     c.heartbeat && 'heartbeat: ' + c.heartbeat + ' Hz',
+                     c.name].filter(Boolean).join('  ·  ');
       el.innerHTML = `
-        <input type="radio" name="config" value="${c.path}">
+        <input type="radio" name="config" value="${esc(c.path)}">
         <span>
-          <span class="name">${c.name}</span><span class="badge" hidden>active</span>
-          <span class="detail">${[c.sink && 'sink: ' + c.sink,
-                                  c.heartbeat && 'heartbeat: ' + c.heartbeat + ' Hz',
-                                  c.device].filter(Boolean).join('  ·  ')}</span>
+          <span class="name">${esc(c.title || c.name)}</span><span class="badge" hidden>active</span>
+          ${c.description ? `<span class="desc">${esc(c.description)}</span>` : ''}
+          <span class="detail">${esc(facts)}</span>
         </span>`;
       el.querySelector('input').addEventListener('change', () => {
         pending.config = c.path;

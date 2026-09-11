@@ -30,6 +30,8 @@ from pathlib import Path
 REPO = Path(os.environ.get("GPB_REPO", Path(__file__).resolve().parent.parent))
 ENVFILE = Path(os.environ.get("GPB_ENVFILE", "/etc/gpbridge/active.env"))
 PASSFILE = Path(os.environ.get("GPB_PASSFILE", "/etc/gpbridge/webpass"))
+USERFILE = Path(os.environ.get("GPB_USERFILE", "/etc/gpbridge/webuser"))
+DEFAULT_USER = "admin"
 PORT = int(os.environ.get("GPB_PORT", "8080"))
 STATIC = Path(__file__).resolve().parent / "static"
 CONFIG_DIR = REPO / "config"
@@ -144,8 +146,13 @@ def list_configs() -> list[Path]:
 
 
 def config_summary(path: Path) -> dict:
-    """Pull the few fields worth showing next to a config's name."""
-    out = {"source": "", "sink": "", "device": "", "heartbeat": ""}
+    """Pull the few fields worth showing next to a config's name.
+
+    [meta] name/description are optional and purely descriptive -- nothing but the UI reads
+    them. A config without them falls back to its filename, so older files keep working.
+    """
+    out = {"source": "", "sink": "", "device": "", "heartbeat": "",
+           "title": path.stem, "description": ""}
     try:
         section = ""
         for line in path.read_text().splitlines():
@@ -158,7 +165,11 @@ def config_summary(path: Path) -> dict:
             if "=" not in line:
                 continue
             k, v = (x.strip() for x in line.split("=", 1))
-            if section == "bridge" and k in ("source", "sink"):
+            if section == "meta" and k == "name" and v:
+                out["title"] = v
+            elif section == "meta" and k == "description":
+                out["description"] = v
+            elif section == "bridge" and k in ("source", "sink"):
                 out[k] = v
             elif section == "source.evdev" and k == "device":
                 out["device"] = v
@@ -171,21 +182,34 @@ def config_summary(path: Path) -> dict:
 
 # --------------------------------------------------------------------------- auth
 
-def load_password() -> str | None:
+def load_credentials() -> tuple[str, str | None]:
+    """Read the username and password from disk on every call.
+
+    Deliberately not cached at startup. Caching meant that editing the password file did
+    nothing until someone thought to restart the service -- a silent failure, and exactly
+    the kind of trap that leads to believing a password has been rotated when it has not.
+    Two small file reads on a page that polls once a second is not a cost worth optimising.
+    """
+    user = DEFAULT_USER
     try:
-        pw = PASSFILE.read_text().strip()
-        return pw or None
+        candidate = USERFILE.read_text().strip()
+        if candidate:
+            user = candidate
     except OSError:
-        return None
-
-
-PASSWORD = load_password()
+        pass
+    try:
+        password = PASSFILE.read_text().strip() or None
+    except OSError:
+        password = None
+    return user, password
 
 
 def authorized(header: str | None) -> bool:
+    expected_user, expected_password = load_credentials()
+
     # No password file means auth is disabled. install_web.sh always generates one; this
     # path exists for running the server by hand during development.
-    if not PASSWORD:
+    if not expected_password:
         return True
     if not header or not header.startswith("Basic "):
         return False
@@ -193,9 +217,12 @@ def authorized(header: str | None) -> bool:
         decoded = base64.b64decode(header[6:]).decode("utf-8", "replace")
     except Exception:
         return False
-    _, _, supplied = decoded.partition(":")
-    # Constant time: a timing oracle on a shared secret is cheap to avoid.
-    return hmac.compare_digest(supplied, PASSWORD)
+    supplied_user, _, supplied_password = decoded.partition(":")
+    # Compare both in constant time, and evaluate both halves rather than short-circuiting,
+    # so the response time does not reveal which field was wrong.
+    user_ok = hmac.compare_digest(supplied_user, expected_user)
+    password_ok = hmac.compare_digest(supplied_password, expected_password)
+    return user_ok and password_ok
 
 
 # --------------------------------------------------------------------------- HTTP
@@ -313,8 +340,11 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     if not shutil.which("systemctl"):
         print("systemctl not found; this is meant to run on the Pi", file=sys.stderr)
-    if not PASSWORD:
+    web_user, web_password = load_credentials()
+    if not web_password:
         print(f"[web] no password at {PASSFILE} -- authentication DISABLED", file=sys.stderr)
+    else:
+        print(f"[web] authenticating as user '{web_user}'", file=sys.stderr)
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"[web] listening on 0.0.0.0:{PORT}  repo={REPO}  env={ENVFILE}", file=sys.stderr)
     try:
