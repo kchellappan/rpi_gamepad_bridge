@@ -104,6 +104,32 @@ else
   echo "==> appended an [all] stanza with dtoverlay=dwc2,dr_mode=${MODE}"
 fi
 
+# Comment out dwc2 overlay declarations in OTHER sections.
+#
+# In principle a line under [cm5] cannot affect a Pi 5 Model B, and an earlier version of
+# this script left such lines alone on exactly that reasoning. Field notes from a working
+# configuration say to remove them, so we do -- a second dtoverlay=dwc2 declaration
+# elsewhere in the file is cheap to rule out and evidently does interfere. Commented
+# rather than deleted, so the original is recoverable from the file itself as well as from
+# the backup.
+while IFS=$'\t' read -r ln sec txt; do
+  in_scope "$sec" && continue
+  sed -i "${ln}s|^|#gpb-disabled |" "$CONFIG"
+  echo "==> commented out the [${sec}] dwc2 line at ${ln} (duplicate declaration)"
+done < <(scan_dwc2)
+
+# Load the gadget modules at boot.
+#
+# dwc2 may be built into the kernel (it is on current Pi OS, where lsmod shows nothing yet
+# the UDC exists), in which case these are no-ops and harmless. libcomposite genuinely
+# matters: gadget_up.sh modprobes it on demand, but having it present at boot avoids a
+# race with the systemd unit that builds the gadget.
+if [[ "$MODE" == "peripheral" ]]; then
+  echo dwc2         > /etc/modules-load.d/dwc2.conf
+  echo libcomposite > /etc/modules-load.d/libcomposite.conf
+  echo "==> module autoload configured (/etc/modules-load.d/{dwc2,libcomposite}.conf)"
+fi
+
 if [[ -f "$CMDLINE" ]] && grep -q 'modules-load=dwc2' "$CMDLINE"; then
   echo "WARNING: $CMDLINE also contains modules-load=dwc2."
   echo "         The overlay already loads it; consider removing that token."
