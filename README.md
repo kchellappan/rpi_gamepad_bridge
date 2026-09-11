@@ -159,11 +159,15 @@ what it sends.
 The page walks through the setup, notices the loopback appearing, runs the samples, and puts
 your input source back afterwards.
 
-What it measures is the whole chain **except the controller**:
+What it measures:
 
 ```
-socket -> bridge -> encode -> /dev/hidg0 -> USB -> host -> evdev
+/dev/hidg0 -> USB -> host -> evdev
 ```
+
+The bridge is stopped for the run, because it holds the gadget open, and the report is
+written directly. Its own processing — a read, an encode, a write — is microseconds against a
+total set by the polling interval, so including it would change nothing this can resolve.
 
 The controller's own latency is not included and cannot be, because nothing in software can
 press a physical button — that needs a GPIO bridged across a button's contacts. The results

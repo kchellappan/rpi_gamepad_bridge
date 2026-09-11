@@ -508,24 +508,18 @@ def find_loopback_pad() -> dict:
 
 
 def run_latency(device: str, samples: int) -> dict:
+    """Measure with the bridge stopped, writing straight to the gadget.
+
+    Nothing here goes through the bridge. An earlier version drove it over its Unix socket so
+    the measurement would follow the real serving path, but the bridge contributes a socket
+    read, an encode and a write -- microseconds, against a total set by a 1 ms polling
+    interval, and below what this can resolve. It bought nothing measurable in exchange for a
+    mode switch, two restarts, a restore-on-failure path, and a socket only root could reach.
+    """
     if not LATENCY.is_file():
         return {"ok": False, "error": "gpb-latency is not built"}
-    sock = "/run/gpbridge.sock"
-    # Read the socket path the running config actually uses rather than assuming the default.
-    try:
-        cfg = Path(read_env()["GPB_CONFIG"])
-        section = ""
-        for line in cfg.read_text().splitlines():
-            line = line.split("#", 1)[0].split(";", 1)[0].strip()
-            if line.startswith("["):
-                section = line.strip("[]").strip()
-            elif section == "source.socket" and line.startswith("path"):
-                sock = line.split("=", 1)[1].strip()
-    except (OSError, KeyError, IndexError):
-        pass
-
-    rc, out = run([str(LATENCY), "--device", device, "--socket", sock,
-                   "--samples", str(samples)], timeout=max(60, samples // 2 + 30))
+    rc, out = run(["sudo", "-n", str(LATENCY), "--device", device, "--samples", str(samples)],
+                  timeout=max(60, samples // 2 + 30))
     for line in out.splitlines():
         if line.strip().startswith("{"):
             try:
@@ -672,21 +666,16 @@ class Handler(BaseHTTPRequestHandler):
                                    "error": "the loopback cable is not connected"})
             samples = max(10, min(int(payload.get("samples", 60)), 300))
 
-            # Measuring drives the bridge through its socket, so the source has to be
-            # switched and put back. Restoring in a finally-equivalent path matters: leaving
-            # someone in socket mode would look exactly like a dead controller.
-            env = read_env()
-            previous = env["GPB_SOURCE"]
+            # The bridge holds /dev/hidg0 open, so it has to stand aside. Restarting it in
+            # the failure path matters: leaving it stopped would present as a dead
+            # controller with nothing on screen to explain why.
+            was_active = unit_state(BRIDGE_UNIT)["active"] == "active"
             try:
-                write_env(env["GPB_CONFIG"], "socket")
-                systemctl("restart", BRIDGE_UNIT)
-                import time as _time
-                _time.sleep(1.5)
+                systemctl("stop", BRIDGE_UNIT)
                 result = run_latency(pad["event"], samples)
             finally:
-                write_env(env["GPB_CONFIG"], previous)
-                systemctl("restart", BRIDGE_UNIT)
-            result["restored_source"] = previous
+                if was_active:
+                    systemctl("start", BRIDGE_UNIT)
             return self._json(result)
 
         if path == "/api/wizard/begin":

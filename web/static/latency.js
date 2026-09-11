@@ -120,7 +120,7 @@ function wireLatency() {
     L.running = true;
     clearInterval(L.detectTimer);
     latShow('lat-running');
-    lq('lat-sub').textContent = 'Running. The bridge is in socket mode until this finishes.';
+    lq('lat-sub').textContent = 'Running. The bridge is stopped until this finishes.';
     const samples = parseInt(lq('lat-samples').value, 10) || 60;
     try {
       const r = await api('/api/latency/run', {
@@ -140,12 +140,13 @@ function wireLatency() {
         lq('lat-max').textContent = r.max_ms.toFixed(2);
         drawHistogram(r.samples);
         lq('lat-detail').textContent =
-          `${r.n} samples, ${r.lost} lost. Measured from injecting an input to the host `
-          + `observing it: bridge, encoding, USB and evdev. The controller's own latency is `
-          + `not included and cannot be measured this way.`;
+          `${r.n} samples, ${r.lost} lost. Measured from writing a report to the gadget to `
+          + `the host observing it: USB and evdev. Neither the bridge's own processing `
+          + `(microseconds) nor the controller's latency is included; the latter cannot be `
+          + `measured this way at all.`;
         lq('lat-interp').textContent = interpret(r);
         latShow('lat-results');
-        lq('lat-sub').textContent = `Source restored to ${r.restored_source}.`;
+        lq('lat-sub').textContent = 'Bridge restarted.';
       }
     } catch (e) {
       latShow('lat-setup');

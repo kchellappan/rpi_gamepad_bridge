@@ -102,8 +102,7 @@
       <button id="lat-open" class="btn">Measure</button>
     </div>
     <p class="hint">Needs a loopback: the OTG data leg moved from the console into one of the
-      Pi's own USB-A ports. The bridge is switched to socket mode during the run and put back
-      afterwards.</p>
+      Pi's own USB-A ports. The bridge is stopped during the run and restarted afterwards.</p>
   </section>
 
   <section class="panel">
@@ -201,8 +200,8 @@
           <li>Leave the power leg alone.</li>
         </ol>
         <p class="wiz-note" id="lat-detect">Looking for the loopback…</p>
-        <p class="warn-box">The run switches the bridge to socket mode and restarts it, then
-          puts your setting back. The console receives nothing while it runs.</p>
+        <p class="warn-box">The bridge is stopped during the run, because it holds the gadget
+          open, and restarted afterwards. The console receives nothing while it runs.</p>
         <div class="actions">
           <button id="lat-run" class="btn btn-primary" disabled>Run measurement</button>
           <label class="check">Samples
