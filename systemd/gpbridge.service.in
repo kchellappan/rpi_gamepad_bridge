@@ -6,7 +6,12 @@ After=gpb-gadget.service
 
 [Service]
 Type=simple
-ExecStart=@REPO@/build/gpbridge --config @CONFIG@
+
+# Which config and which input source to use. Rewritten by gpb-web when the user selects a
+# different one; the config files themselves stay the source of truth, so a change made here
+# is visible to someone on SSH and vice versa.
+EnvironmentFile=@ENVFILE@
+ExecStart=@REPO@/build/gpbridge --config ${GPB_CONFIG} --source ${GPB_SOURCE}
 
 # The bridge already tolerates a missing controller and reconnects on its own, so a
 # restart here is for genuine crashes only -- not for the pad being unplugged.

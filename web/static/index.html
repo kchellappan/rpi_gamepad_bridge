@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Gamepad Bridge</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div>
+      <h1>Gamepad Bridge</h1>
+      <p class="sub" id="hostline">&nbsp;</p>
+    </div>
+  </div>
+  <div class="live"><span class="dot" id="pulse"></span><span id="updated">connecting…</span></div>
+</header>
+
+<main>
+  <section class="cards">
+    <article class="card" id="card-bridge">
+      <h2>Bridge</h2>
+      <p class="state" id="bridge-state">—</p>
+      <p class="meta" id="bridge-meta">&nbsp;</p>
+      <div class="actions">
+        <button data-action="start"   class="btn">Start</button>
+        <button data-action="stop"    class="btn btn-quiet">Stop</button>
+        <button data-action="restart" class="btn btn-primary">Restart</button>
+      </div>
+    </article>
+
+    <article class="card" id="card-usb">
+      <h2>USB host</h2>
+      <p class="state" id="usb-state">—</p>
+      <p class="meta" id="usb-meta">&nbsp;</p>
+      <div class="actions">
+        <button id="gadget-restart" class="btn btn-quiet">Re-enumerate gadget</button>
+      </div>
+      <p class="hint">Only if the console has wedged. This shows the console a controller
+        disconnect, so it is never done automatically.</p>
+    </article>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Configuration</h2>
+      <p class="hint">The <code>.ini</code> files stay the source of truth. This selects which
+        one the service starts with.</p>
+    </div>
+
+    <div class="field">
+      <label>Mode</label>
+      <div class="segmented" id="source-toggle" role="group">
+        <button data-source="evdev"  class="seg">Controller</button>
+        <button data-source="socket" class="seg">Socket</button>
+      </div>
+      <p class="hint" id="source-hint">&nbsp;</p>
+    </div>
+
+    <div class="field">
+      <label>Config file</label>
+      <div id="config-list" class="options"></div>
+    </div>
+
+    <div class="apply">
+      <button id="apply" class="btn btn-primary">Apply and restart</button>
+      <span id="apply-note" class="note"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head row">
+      <div>
+        <h2>Logs</h2>
+        <p class="hint">journalctl &mdash; gpbridge.service</p>
+      </div>
+      <label class="check"><input type="checkbox" id="follow" checked> Follow</label>
+    </div>
+    <pre id="logs" class="logs">loading…</pre>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>

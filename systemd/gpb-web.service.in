@@ -1,0 +1,27 @@
+[Unit]
+Description=Gamepad bridge web control panel
+Documentation=https://github.com/kchellappan/rpi_gamepad_bridge
+After=network-online.target
+Wants=network-online.target
+# Deliberately NOT Requires=gpbridge.service: half this service's job is to act while the
+# bridge is stopped, so it must start and stay up independently of it.
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+ExecStart=/usr/bin/python3 @REPO@/web/gpb_web.py
+Environment=GPB_REPO=@REPO@
+Environment=GPB_ENVFILE=@ENVFILE@
+Environment=GPB_PORT=@PORT@
+Restart=always
+RestartSec=3
+
+# It is a control plane, not a privileged process. Everything it needs beyond this comes
+# from a narrowly scoped sudoers rule covering three specific commands.
+NoNewPrivileges=no
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
