@@ -25,6 +25,13 @@
   }
 }
 * { box-sizing: border-box; }
+
+/* The browser's own [hidden] rule is a UA style, so ANY class selector that sets `display`
+   silently beats it. .overlay{display:flex} did exactly that: the wizard modal could never
+   be hidden, so it covered the viewport from page load and blocked every click behind it,
+   including its own Close button. Make the attribute authoritative instead of relying on
+   each component to remember not to fight it. */
+[hidden] { display: none !important; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
