@@ -74,9 +74,23 @@ the real cause:
 - Not fixable from userspace. Writing `connect` to the UDC's `soft_connect` succeeds and
   changes nothing, because `dwc2` gates the pull-up on a VBUS session it never sees.
 
-The Raspberry Pi apt repo currently offers only 6.18.34 and 6.18.39, so there is no older
-Pi kernel to fall back to via apt. The reliable fix is an older image; `rpi-update` to an
-older kernel is the remote-only alternative.
+Tested and still broken on **both 6.18.34 and 6.18.39** -- upgrading within the 6.18 line
+does not help. The Raspberry Pi apt repo offers nothing older, so there is no apt route back
+to a working kernel.
+
+Known-good: a Bookworm image (this hardware last worked on one flashed around April 2025).
+The reliable fix is to reflash such an image. `rpi-update` to a pre-regression kernel is the
+remote-only alternative, at the cost of running an unsupported tool with a Trixie userland.
+
+Everything else on the Pi is already scripted, so re-provisioning after a reflash is short:
+
+```bash
+git clone https://github.com/kchellappan/rpi_gamepad_bridge.git && cd rpi_gamepad_bridge
+sudo ./scripts/install_deps.sh          # optional; build.sh falls back to plain g++
+./scripts/build.sh
+sudo ./scripts/enable_gadget_mode.sh && sudo reboot
+sudo ./scripts/install_services.sh
+```
 
 ### Input peripheral
 
