@@ -291,7 +291,24 @@ The controller mapping is no longer a guess: `config/stadia_to_switch.ini` holds
 `gpb-discover wizard` measured on real hardware, including the inverted face-button aliases
 and the conventional `ABS_BRAKE`=left / `ABS_GAS`=right trigger assignment.
 
-### Two traps worth knowing about
+### The Stadia controller re-enumerates on its own
+
+Not a fault, and not something to debug when you see it. `dmesg` shows the pad dropping off
+the bus and coming straight back as a new device number, same serial, unprompted:
+
+```
+usb 3-1: USB disconnect, device number 3
+usb 3-1: new high-speed USB device number 4 using xhci-hcd
+```
+
+The evdev node is destroyed and recreated, potentially as a different `eventN`. The bridge
+treats this as a normal operating condition: it detects the loss, **releases the output to
+neutral** (a pad that vanishes mid-press would otherwise leave the console seeing that
+button held forever), and retries every 500ms, re-resolving the configured glob so a new
+node number is picked up automatically. `--record` captures survive it; the stats line
+reports disconnect and reconnect counts.
+
+### Three traps worth knowing about
 
 **evdev's face-button aliases lie about position -- confirmed on hardware.** `BTN_X` is an
 alias for `BTN_NORTH` and `BTN_Y` for `BTN_WEST`, but on this layout X sits *west* and Y
@@ -306,6 +323,11 @@ Reading the code names would have given the opposite and shipped X and Y swapped
 Switch -- which would have presented as a mapping *preference* complaint rather than a bug,
 and could have survived a long time. This is why the wizard asks you to press the *top*
 button and records whatever code actually arrives.
+
+**A dead fd spins epoll.** `epoll` keeps reporting `EPOLLERR`/`EPOLLHUP` on a descriptor
+whose device has gone away, so a read loop that logs the error and returns will be re-entered
+immediately, forever, emitting one line per iteration. A source that can vanish has to drop
+the descriptor and say so, not just report the errno.
 
 **Transforms are not idempotent.** Deadzone and expo rescale a stick, so applying them to
 an already-transformed capture silently produces different values than the original run --
