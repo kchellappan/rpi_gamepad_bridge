@@ -19,7 +19,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 UNIT_DIR=/etc/systemd/system
 CONF_DIR=/etc/gpbridge
-ENVFILE="$CONF_DIR/active.env"
+STATE_DIR=/var/lib/gpbridge
+ENVFILE="$STATE_DIR/active.env"
 PASSFILE="$CONF_DIR/webpass"
 USERFILE="$CONF_DIR/webuser"
 SUDOERS=/etc/sudoers.d/020_gpb-web
@@ -103,7 +104,14 @@ esac
 # ---------------------------------------------------------------------------- install
 need_root
 [[ -x "$REPO/build/gpbridge" ]] || { echo "build first: $REPO/scripts/build.sh" >&2; exit 1; }
-mkdir -p "$CONF_DIR"
+mkdir -p "$CONF_DIR" "$STATE_DIR"
+# The service writes its selection here by creating a temp file and renaming, so it needs
+# write permission on the directory itself, not just on the file.
+chown "$SERVICE_USER" "$STATE_DIR"
+if [[ -f "$CONF_DIR/active.env" && ! -f "$ENVFILE" ]]; then
+  mv "$CONF_DIR/active.env" "$ENVFILE"
+  echo "==> moved active.env to $STATE_DIR"
+fi
 
 # Seed the active selection if absent, so the bridge has something to start with before
 # anyone opens the page.

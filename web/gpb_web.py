@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 REPO = Path(os.environ.get("GPB_REPO", Path(__file__).resolve().parent.parent))
-ENVFILE = Path(os.environ.get("GPB_ENVFILE", "/etc/gpbridge/active.env"))
+ENVFILE = Path(os.environ.get("GPB_ENVFILE", "/var/lib/gpbridge/active.env"))
 PASSFILE = Path(os.environ.get("GPB_PASSFILE", "/etc/gpbridge/webpass"))
 USERFILE = Path(os.environ.get("GPB_USERFILE", "/etc/gpbridge/webuser"))
 DEFAULT_USER = "admin"
@@ -133,6 +133,9 @@ def write_env(config: str, source: str) -> tuple[bool, str]:
     )
     with _env_lock:
         try:
+            # The temp file must live in the same directory as the target: os.replace is
+            # only atomic within a filesystem, and creating it here needs write permission
+            # on the DIRECTORY, not merely ownership of the file being replaced.
             tmp = ENVFILE.with_suffix(".env.tmp")
             tmp.write_text(body)
             os.replace(tmp, ENVFILE)     # atomic: never leave a half-written env file
