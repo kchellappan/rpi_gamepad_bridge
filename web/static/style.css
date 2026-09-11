@@ -192,3 +192,15 @@ main { max-width: 880px; margin: 0 auto; padding: 1.25rem; display: grid; gap: 1
 .opt-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .btn-danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
 .btn-danger:hover { background: var(--bad-bg); }
+
+/* ----------------------------------------------------------- link health banner */
+.banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: .85rem 1.1rem; border-radius: var(--radius); border: 1px solid;
+}
+.banner-head { margin: 0; font-weight: 650; font-size: .95rem; }
+.banner-detail { margin: .15rem 0 0; font-size: .83rem; opacity: .85; }
+.banner.bad { background: var(--bad-bg); border-color: color-mix(in srgb, var(--bad) 40%, transparent); color: var(--bad); }
+.banner.idle { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 35%, transparent); color: var(--warn); }
+.banner.unknown { background: var(--panel); border-color: var(--line); color: var(--ink-soft); }
+.banner .btn { border-color: currentColor; color: inherit; flex: none; }

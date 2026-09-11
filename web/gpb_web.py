@@ -36,6 +36,7 @@ PORT = int(os.environ.get("GPB_PORT", "8080"))
 STATIC = Path(__file__).resolve().parent / "static"
 CONFIG_DIR = REPO / "config"
 TARGET_DIR = REPO / "targets"
+STATUS_FILE = Path(os.environ.get("GPB_STATUS", "/var/lib/gpbridge/status.json"))
 DISCOVER = REPO / "build" / "gpb-discover"
 
 BRIDGE_UNIT = "gpbridge.service"
@@ -183,6 +184,65 @@ def config_summary(path: Path) -> dict:
     except OSError:
         pass
     return out
+
+
+# --------------------------------------------------------------------------- health
+
+def bridge_status() -> dict:
+    """The bridge's own account of whether its reports are reaching the host."""
+    try:
+        return json.loads(STATUS_FILE.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def assess(bridge: dict, udc: dict, status: dict) -> dict:
+    """Decide what to actually tell the user about the link.
+
+    "A host is attached" and "the host is accepting reports" are different claims, and only
+    the second one means anything. They came apart on real hardware: /sys/class/udc sat at
+    state=configured, speed=high-speed, while the interrupt endpoint was disabled and every
+    write failed. The panel reported a healthy connection throughout an outage that made the
+    console completely unresponsive, which is worse than showing nothing at all.
+
+    So the reassuring answer requires evidence from the bridge, not just from sysfs.
+    """
+    if bridge.get("active") != "active":
+        return {"level": "idle", "headline": "Bridge stopped",
+                "detail": "Nothing is being sent. Start the bridge to resume."}
+
+    if not udc.get("present"):
+        return {"level": "bad", "headline": "No USB gadget",
+                "detail": "Peripheral mode is not enabled on this Pi."}
+
+    attached = udc.get("state") == "configured"
+    if not attached:
+        return {"level": "idle", "headline": "No console connected",
+                "detail": f"The USB link reports \"{udc.get('state')}\". "
+                          "Check the cable into the console."}
+
+    if not status:
+        return {"level": "unknown", "headline": "Connected",
+                "detail": "The bridge is not reporting its health yet."}
+
+    stale = status.get("since_write_ok_ms", 0)
+    failures = status.get("write_failures", 0)
+    never = not status.get("ever_wrote", False)
+
+    # Attached, but nothing is getting through. This is the state that previously displayed
+    # as a healthy connection.
+    if never and failures > 20:
+        return {"level": "bad", "headline": "Console is not accepting input",
+                "detail": "The USB link says it is connected, but no report has ever reached "
+                          "it. Re-enumerating the gadget usually clears this; the cable may "
+                          "need reseating at the console."}
+    if not never and (failures > 60 or stale > 4000):
+        return {"level": "bad", "headline": "Console stopped accepting input",
+                "detail": f"Reports were flowing, but none has landed for {stale // 1000}s. "
+                          "Try re-enumerating the gadget."}
+
+    return {"level": "ok", "headline": "Connected and sending",
+            "detail": f"{status.get('submits', 0)} reports sent."}
 
 
 # --------------------------------------------------------------------------- devices
@@ -607,10 +667,13 @@ class Handler(BaseHTTPRequestHandler):
         configs = []
         for p in list_configs():
             configs.append({"path": str(p), "name": p.name, **config_summary(p)})
+        bridge, udc, bstat = unit_state(BRIDGE_UNIT), udc_state(), bridge_status()
         return {
-            "bridge": unit_state(BRIDGE_UNIT),
+            "bridge": bridge,
             "gadget": unit_state(GADGET_UNIT),
-            "udc": udc_state(),
+            "udc": udc,
+            "link": assess(bridge, udc, bstat),
+            "stats": bstat,
             "active": {"config": env["GPB_CONFIG"], "source": env["GPB_SOURCE"]},
             "configs": configs,
         }

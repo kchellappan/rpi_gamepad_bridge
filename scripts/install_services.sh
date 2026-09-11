@@ -64,6 +64,7 @@ fi
 
 for u in gpb-gadget gpbridge; do
   sed -e "s|@REPO@|$REPO|g" -e "s|@CONFIG@|$CONFIG|g" -e "s|@ENVFILE@|$ENVFILE|g" \
+      -e "s|@STATEDIR@|$STATE_DIR|g" \
       "$REPO/systemd/$u.service.in" > "$UNIT_DIR/$u.service"
   echo "wrote $UNIT_DIR/$u.service"
 done

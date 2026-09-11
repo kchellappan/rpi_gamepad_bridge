@@ -4,9 +4,12 @@
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
+#include <sys/types.h>
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 #include "gpb/rt.hpp"
 
 namespace gpb {
@@ -19,6 +22,7 @@ Bridge::Bridge(std::unique_ptr<InputSource> src, std::unique_ptr<OutputSink> sin
       opts_(std::move(opts)) {}
 
 Bridge::~Bridge() {
+  if (!opts_.status_path.empty()) ::remove(opts_.status_path.c_str());
   if (timerfd_ >= 0) ::close(timerfd_);
   if (epfd_ >= 0) ::close(epfd_);
   if (src_) src_->shutdown();
@@ -87,8 +91,54 @@ bool Bridge::submit_current() {
     ev.data.fd = sink_->writable_fd();
     ::epoll_ctl(epfd_, EPOLL_CTL_MOD, sink_->writable_fd(), &ev);
   }
-  if (sent) last_sent_ = current_;
+  if (sent) {
+    last_sent_ = current_;
+    stats_.last_write_ok_ns = now_mono_ns();
+    stats_.write_failures = 0;
+  } else {
+    ++stats_.write_failures;
+  }
   return sent;
+}
+
+// Publish health for the control panel.
+//
+// Written atomically and cheaply: a few hundred bytes once a second, off the path that
+// matters. The point is that "the host is attached" and "the host is accepting reports" are
+// different claims, and only the second one means anything to a user. The link can sit at
+// state=configured with its IN endpoint disabled, failing every write, which is precisely
+// the failure this exists to surface.
+void Bridge::publish_status(bool force) {
+  if (opts_.status_path.empty()) return;
+  const uint64_t now = now_mono_ns();
+  if (!force && now - status_written_ns_ < 1000000000ull) return;
+  status_written_ns_ = now;
+
+  const uint64_t since_ok_ms =
+      stats_.last_write_ok_ns ? (now - stats_.last_write_ok_ns) / 1000000ull : 0;
+
+  char buf[640];
+  const int n = std::snprintf(
+      buf, sizeof(buf),
+      "{\"pid\":%d,\"uptime_ms\":%llu,\"source_connected\":%s,\"source\":\"%s\","
+      "\"sink\":\"%s\",\"updates\":%llu,\"submits\":%llu,\"coalesced\":%llu,"
+      "\"heartbeats\":%llu,\"disconnects\":%llu,\"reconnects\":%llu,"
+      "\"write_failures\":%llu,\"ever_wrote\":%s,\"since_write_ok_ms\":%llu}\n",
+      static_cast<int>(getpid()), (unsigned long long)((now - started_ns_) / 1000000ull),
+      src_ && src_->connected() ? "true" : "false", src_ ? src_->name() : "",
+      sink_ ? sink_->name() : "", (unsigned long long)stats_.updates,
+      (unsigned long long)stats_.submits, (unsigned long long)stats_.coalesced,
+      (unsigned long long)stats_.heartbeats, (unsigned long long)stats_.disconnects,
+      (unsigned long long)stats_.reconnects, (unsigned long long)stats_.write_failures,
+      stats_.last_write_ok_ns ? "true" : "false", (unsigned long long)since_ok_ms);
+  if (n <= 0) return;
+
+  const std::string tmp = opts_.status_path + ".tmp";
+  FILE* f = std::fopen(tmp.c_str(), "w");
+  if (!f) return;
+  std::fwrite(buf, 1, static_cast<size_t>(n), f);
+  std::fclose(f);
+  std::rename(tmp.c_str(), opts_.status_path.c_str());
 }
 
 int Bridge::run() {
@@ -98,6 +148,8 @@ int Bridge::run() {
 
   int registered_src_fd = -1;
   running_ = true;
+  started_ns_ = now_mono_ns();
+  publish_status(true);
   epoll_event events[8];
   // Seed from reality rather than assuming: the source may legitimately have started
   // without its device, in which case this is not a "disconnect" to announce.
@@ -156,6 +208,7 @@ int Bridge::run() {
     // Poll faster while disconnected so a reconnect is picked up promptly, but stay lazy
     // in the normal case where every wakeup is driven by an actual event.
     const int timeout_ms = src_->connected() ? 1000 : 100;
+    publish_status(false);
     const int n = ::epoll_wait(epfd_, events, 8, timeout_ms);
     if (n < 0) {
       if (errno == EINTR) continue;

@@ -298,6 +298,16 @@ else
   bad "scripts reference ids that are not in index.html" "$MISSING"
 fi
 
+# Link assessment: the decision that previously reported a healthy connection throughout a
+# total outage.
+if HEALTHOUT="$(python3 tests/test_health.py 2>&1)"; then
+  echo "$HEALTHOUT"
+  PASS=$((PASS + $(grep -c 'PASS' <<<"$HEALTHOUT")))
+else
+  echo "$HEALTHOUT"
+  FAIL=$((FAIL + $(grep -c 'FAIL' <<<"$HEALTHOUT")))
+fi
+
 # ---------------------------------------------------------------- 7. no dependency creep
 echo "python dependency check"
 if OUT="$(python3 tests/check_stdlib_only.py 2>&1)"; then

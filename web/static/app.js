@@ -35,6 +35,17 @@ function stateClass(active) {
 }
 
 function renderStatus(s) {
+  // Link health first. This is the claim a user actually cares about, and the one the page
+  // used to get wrong: a USB link can report itself connected while the endpoint is dead
+  // and every report fails, which looked identical to working.
+  const link = s.link || { level: 'unknown', headline: '', detail: '' };
+  const banner = $('link-banner');
+  banner.className = 'banner ' + link.level;
+  banner.hidden = link.level === 'ok';
+  $('link-head').textContent = link.headline || '';
+  $('link-detail').textContent = link.detail || '';
+  $('link-fix').hidden = link.level !== 'bad';
+
   // Bridge
   $('bridge-state').textContent = s.bridge.active;
   $('bridge-state').className = 'state ' + stateClass(s.bridge.active);
@@ -52,10 +63,14 @@ function renderStatus(s) {
     $('usb-state').className = 'state bad';
     $('usb-meta').textContent = 'peripheral mode is not enabled';
   } else {
+    // "connected" now means reports are landing, not merely that the link enumerated.
     const attached = u.state === 'configured';
-    $('usb-state').textContent = attached ? 'connected' : u.state;
-    $('usb-state').className = 'state ' + (attached ? 'ok' : 'warn');
-    $('usb-meta').textContent = `${u.name}  ·  ${u.speed}`;
+    const flowing = (s.link || {}).level === 'ok';
+    $('usb-state').textContent = !attached ? u.state : (flowing ? 'sending' : 'not sending');
+    $('usb-state').className = 'state ' + (flowing ? 'ok' : attached ? 'bad' : 'warn');
+    const st = s.stats || {};
+    $('usb-meta').textContent = [u.name, u.speed,
+      st.submits !== undefined ? `${st.submits} reports` : null].filter(Boolean).join('  ·  ');
   }
 
   // Mode
@@ -227,6 +242,7 @@ function wire() {
     refresh(); refreshLogs();
   });
 
+  $('link-fix').addEventListener('click', () => $('gadget-restart').click());
   $('hostline').textContent = location.host;
 }
 
