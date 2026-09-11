@@ -134,6 +134,21 @@ void button_pulse(int fd, uint16_t code) {
   sync(fd);
 }
 
+// A short deterministic sequence for automated tests: fast, and every step produces an
+// observable change in the encoded HID report.
+int run_emit_test(int fd) {
+  usleep(600000);                                  // let a reader attach
+  emit(fd, EV_ABS, ABS_X, 255); sync(fd);          // left stick hard right
+  usleep(200000);
+  emit(fd, EV_KEY, BTN_SOUTH, 1); sync(fd);        // press the bottom face button
+  usleep(200000);
+  emit(fd, EV_KEY, BTN_SOUTH, 0);                  // release it and recentre, one batch:
+  emit(fd, EV_ABS, ABS_X, 128); sync(fd);          // both land in a single SYN_REPORT
+  usleep(300000);
+  std::printf("emit-test complete\n");
+  return 0;
+}
+
 int run_wizard_script(int fd, int lead_in_ms) {
   // Order must match gpb-discover wizard's prompts exactly.
   //
@@ -194,10 +209,11 @@ int run_wizard_script(int fd, int lead_in_ms) {
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "";
   if (mode != "--hold" && mode != "--wizard-script" && mode != "--wizard-script-sloppy" &&
-      mode != "--wizard-script-cold") {
+      mode != "--wizard-script-cold" && mode != "--emit-test") {
     std::fprintf(stderr,
                  "usage: %s [--hold | --wizard-script [lead_in_ms] | "
-                 "--wizard-script-sloppy [lead_in_ms] | --wizard-script-cold [lead_in_ms]]\n",
+                 "--wizard-script-sloppy [lead_in_ms] | --wizard-script-cold [lead_in_ms] | "
+                 "--emit-test]\n",
                  argv[0]);
     return 2;
   }
@@ -237,7 +253,8 @@ int main(int argc, char** argv) {
   std::fflush(stdout);
 
   int rc = 0;
-  if (mode != "--hold") rc = run_wizard_script(fd, lead_in_ms);
+  if (mode == "--emit-test") rc = run_emit_test(fd);
+  else if (mode != "--hold") rc = run_wizard_script(fd, lead_in_ms);
   else { std::printf("holding; Ctrl-C to remove\n"); std::fflush(stdout); pause(); }
 
   ioctl(fd, UI_DEV_DESTROY);
