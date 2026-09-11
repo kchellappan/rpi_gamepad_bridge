@@ -15,10 +15,20 @@ re-emits that input as a USB HID gamepad that a console accepts as a real contro
 Measured round-trip latency is **0.8–1.0 ms**, which is the USB polling interval; there is
 essentially no software overhead on top of the wire.
 
-**Why it exists:** to capture human gameplay demonstrations for training a VLA
-(vision-language-action) model, then drive the same console from that model's inferred
-actions. Capture and replay are two directions of one pipeline and are bit-for-bit
-identical, so a recorded session replays exactly.
+## Why it exists
+
+Because the bridge sits between an input and a host, anything that can produce gamepad state
+can drive a console that would otherwise only accept a first-party controller:
+
+- **Bridging non-traditional controllers.** Connect an input the console has never heard of —
+  a CAN joystick, custom or adaptive hardware, an accessibility device — to a host that only
+  speaks standard USB HID. Adding one is a new `InputSource`, not a rewrite.
+- **Automation.** Drive a console programmatically over a socket: step through a fixed
+  sequence, script a repetitive task, or exercise something the same way many times over.
+- **Imitation learning.** Capture human gameplay as training data for a VLA
+  (vision-language-action) model, then drive the same console from that model's inferred
+  actions. Capture and replay are two directions of one pipeline and are bit-for-bit
+  identical, so a recorded session replays exactly.
 
 ---
 
@@ -114,8 +124,8 @@ EAST = 1 << 1
 s.send(struct.pack(FMT, 0x52474231, 1, 48, 0, EAST, 0, 0, 32767, 0, 0, 0, 0, 0, b"\0" * 6))
 ```
 
-Every record carries both `CLOCK_MONOTONIC` and `CLOCK_REALTIME` timestamps, so captures can
-be aligned against camera frames. See [`tests/drive.py`](tests/drive.py) for a working
+Every record carries both `CLOCK_MONOTONIC` and `CLOCK_REALTIME` timestamps — the first for
+interval math, the second for aligning a capture against an external recording such as video. See [`tests/drive.py`](tests/drive.py) for a working
 client.
 
 ## Architecture
