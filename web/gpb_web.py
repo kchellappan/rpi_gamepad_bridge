@@ -197,7 +197,7 @@ def bridge_status() -> dict:
         return {}
 
 
-def assess(bridge: dict, udc: dict, status: dict) -> dict:
+def assess(bridge: dict, udc: dict, status: dict, loopback: bool = False) -> dict:
     """Decide what to actually tell the user about the link.
 
     "A host is attached" and "the host is accepting reports" are different claims, and only
@@ -229,6 +229,16 @@ def assess(bridge: dict, udc: dict, status: dict) -> dict:
     stale = status.get("since_write_ok_ms", 0)
     failures = status.get("write_failures", 0)
     never = not status.get("ever_wrote", False)
+
+    # Looped back into this Pi's own USB-A port for a latency run. Writes failing here is
+    # normal and not a fault: usbhid only polls a HID device's interrupt endpoint while
+    # something has its input node open, so with no reader the reports simply queue. Calling
+    # that a wedged console would send someone re-enumerating a gadget that is working.
+    if loopback and (never or failures > 20):
+        return {"level": "idle", "headline": "Looped back to this Pi",
+                "detail": "The gadget is plugged into this Pi rather than a console. Reports "
+                          "only flow while something reads it, which the latency measurement "
+                          "does. Nothing is wrong."}
 
     # Attached, but nothing is getting through. This is the state that previously displayed
     # as a healthy connection.
@@ -756,7 +766,7 @@ class Handler(BaseHTTPRequestHandler):
             "bridge": bridge,
             "gadget": unit_state(GADGET_UNIT),
             "udc": udc,
-            "link": assess(bridge, udc, bstat),
+            "link": assess(bridge, udc, bstat, find_loopback_pad().get("found", False)),
             "stats": bstat,
             "active": {"config": env["GPB_CONFIG"], "source": env["GPB_SOURCE"]},
             "configs": configs,

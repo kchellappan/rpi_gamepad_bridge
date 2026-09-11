@@ -173,9 +173,15 @@ The controller's own latency is not included and cannot be, because nothing in s
 press a physical button — that needs a GPIO bridged across a button's contacts. The results
 say so rather than quietly presenting a flattering number.
 
-Expect roughly **1 ms**. The gadget's endpoint is polled once per millisecond at high speed,
-so that is the floor, and the histogram showing the distribution piled against it is the
-evidence that the interval dominates rather than anything in software.
+Expect roughly **1 ms**. Measured on the reference setup: 60 samples, none lost, median
+0.945 ms, with 59 of 60 falling in the same 0.1 ms bucket. That single spike *is* the finding
+— the USB polling interval quantises everything, and there is no software overhead visible
+above it.
+
+While the cable is looped back, the panel will report **"Looped back to this Pi"** rather
+than a healthy link. That is correct: `usbhid` only polls a HID device's interrupt endpoint
+while something has its input node open, so with no reader the reports simply queue. The
+measurement opens the node itself, which is why it works regardless.
 
 ## Configuration
 
