@@ -247,6 +247,17 @@ else
       "without it any class setting display can make an element unhideable"
 fi
 
+# A document-wide query for a class that several components share will reach into all of
+# them. That happened: the status poll's `document.querySelectorAll('.option')` also matched
+# the wizard's device rows, unchecking the user's selection every two seconds and throwing on
+# their absent `.badge`. Component state belongs to a scoped query.
+if grep -nE "document\.querySelectorAll\('\.(option|ctl)'\)" web/static/*.js >/dev/null; then
+  bad "a document-wide query targets a class shared by several components" \
+      "$(grep -nE "document\.querySelectorAll\('\.(option|ctl)'\)" web/static/*.js)"
+else
+  ok "shared-class queries are scoped to their container"
+fi
+
 # The toast must stack above the modal overlay. It is the only channel the wizard has for
 # reporting an error, and the wizard runs inside that overlay -- underneath it, messages are
 # both hidden and blurred by the overlay's backdrop-filter.

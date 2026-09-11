@@ -125,12 +125,20 @@ function renderStatus(s) {
 
 function markSelection(activePath) {
   const chosen = pending.config ?? activePath;
-  document.querySelectorAll('.option').forEach((el) => {
+  // Scoped to the config list on purpose. Reaching across the whole document for `.option`
+  // also caught the wizard's device and target rows -- so the two-second status poll quietly
+  // unchecked whatever the user had just selected in the modal, then threw on their missing
+  // `.badge` and abandoned the rest of the render. The intermittency was the poll interval.
+  const list = $('config-list');
+  if (!list) return;
+  list.querySelectorAll('.option').forEach((el) => {
     const input = el.querySelector('input');
+    if (!input) return;
     const isChosen = input.value === chosen;
     input.checked = isChosen;
     el.setAttribute('aria-checked', String(isChosen));
-    el.querySelector('.badge').hidden = input.value !== activePath;
+    const badge = el.querySelector('.badge');
+    if (badge) badge.hidden = input.value !== activePath;
   });
 }
 

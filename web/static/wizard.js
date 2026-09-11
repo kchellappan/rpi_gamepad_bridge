@@ -102,7 +102,7 @@ async function loadChoices() {
   devices.forEach((d, i) => {
     const el = document.createElement('label');
     el.className = 'option';
-    el.innerHTML = `<input type="radio" name="wizdev" ${i === 0 ? 'checked' : ''}>
+    el.innerHTML = `<input type="radio" name="wizdev" value="${esc(d.path)}" ${i === 0 ? 'checked' : ''}>
       <span><span class="name">${esc(d.name)}</span>
       <span class="detail">${esc(d.path)}</span></span>`;
     el.querySelector('input').addEventListener('change', () => { W.device = d.path; mark(dbox, el); });
@@ -115,7 +115,7 @@ async function loadChoices() {
   targets.forEach((t, i) => {
     const el = document.createElement('label');
     el.className = 'option';
-    el.innerHTML = `<input type="radio" name="wiztgt" ${i === 0 ? 'checked' : ''}>
+    el.innerHTML = `<input type="radio" name="wiztgt" value="${esc(t.id)}" ${i === 0 ? 'checked' : ''}>
       <span><span class="name">${esc(t.name)}</span>
       <span class="desc">${esc(t.summary || '')}</span></span>`;
     el.querySelector('input').addEventListener('change', () => { W.target = t; mark(tbox, el); });
