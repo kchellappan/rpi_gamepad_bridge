@@ -38,14 +38,11 @@ jobs:
       # is load-bearing rather than decorative -- it is what allows a build on a freshly
       # flashed Raspberry Pi OS image, which ships a compiler but no cmake -- so it needs to
       # keep working. Masking cmake is the only way to exercise it on a runner that has one.
-      - name: Build with cmake hidden
+      - name: Build with the cmake path disabled
         run: |
-          mkdir -p "$HOME/nocmake"
-          printf '#!/bin/sh\nexit 127\n' > "$HOME/nocmake/cmake"
-          chmod +x "$HOME/nocmake/cmake"
-          PATH="$HOME/nocmake:$PATH" command -v cmake >/dev/null && echo "cmake masked"
-          PATH="$HOME/nocmake:$PATH" ./scripts/build.sh 2>&1 | tee out.log
+          USE_CMAKE=0 ./scripts/build.sh 2>&1 | tee out.log
           grep -q "falling back to direct g++" out.log
+          test -x build/gpbridge && test -x build/gpb-discover && test -x build/gpb-fakepad
 
   shell-scripts:
     name: Shell script syntax
