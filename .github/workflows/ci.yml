@@ -44,6 +44,17 @@ jobs:
           grep -q "falling back to direct g++" out.log
           test -x build/gpbridge && test -x build/gpb-discover && test -x build/gpb-fakepad
 
+  python-deps:
+    name: No Python dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The control panel needs no venv, no pip and no build step because it imports nothing
+      # outside the standard library. Enforced rather than asserted -- that property erodes
+      # one convenient import at a time.
+      - name: Check imports
+        run: python3 tests/check_stdlib_only.py
+
   shell-scripts:
     name: Shell script syntax
     runs-on: ubuntu-latest

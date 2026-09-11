@@ -187,7 +187,15 @@ print(' '.join(d[i:i+8].hex() for i in range(0,len(d)//8*8,8)))")"
   fi
 fi
 
-# ---------------------------------------------------------------- 6. web control panel
+# ---------------------------------------------------------------- 6. no dependency creep
+echo "python dependency check"
+if OUT="$(python3 tests/check_stdlib_only.py 2>&1)"; then
+  echo "$OUT"; PASS=$((PASS+1))
+else
+  echo "$OUT"; FAIL=$((FAIL+1))
+fi
+
+# ---------------------------------------------------------------- 7. web control panel
 echo "web control panel"
 WEBPORT=$(( 18000 + RANDOM % 2000 ))
 printf 'GPB_CONFIG=%s/config/stadia_to_switch.ini\nGPB_SOURCE=evdev\n' "$PWD" > "$TMP/active.env"

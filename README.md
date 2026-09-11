@@ -115,6 +115,8 @@ restart itself. It also stays up while the bridge is stopped, which is half of w
   reading the bridge's journal — the server itself runs unprivileged.
 - **Selection** is written to `/etc/gpbridge/active.env`, which the `gpbridge` unit reads.
   The `.ini` files stay the source of truth, so the panel and SSH never disagree.
+- **No venv, no pip, no build step.** The server imports nothing outside the Python standard
+  library, and CI enforces that rather than trusting it.
 
 Changing a config restarts the bridge but leaves the USB device in place, so the console sees
 a brief gap in reports rather than a controller disconnect. The **Re-enumerate gadget** button
@@ -225,9 +227,10 @@ here unlocks them without the licensed silicon.
 ```
 
 Runs with no Pi, no gadget and no controller: the socket source stands in for a controller
-and a regular file stands in for `/dev/hidg0`. Covers report encoding, capture/replay
-equivalence, wire-format stability, startup validation, and the evdev path via a virtual pad.
-CI runs this on every push.
+and a regular file stands in for `/dev/hidg0`. Covers report encoding, release-on-shutdown,
+capture/replay equivalence, wire-format stability, startup validation, the evdev path via a
+virtual pad, control-panel auth and credential rotation, and a check that no Python file
+imports outside the standard library. CI runs all of it on every push.
 
 ## Verified configuration
 
