@@ -46,51 +46,42 @@ data leg goes to the host being controlled.
 This cable is known good: it has driven this exact board successfully before, on a
 Bookworm image flashed around April 2025.
 
-### Kernel regression: gadget mode is broken on Trixie / 6.18
+### The data-leg cable matters, and a bad one is silent
 
-**Do not use a current Raspberry Pi OS Trixie image for this project yet.**
-
-On Trixie with kernel 6.18, `dwc2` never drives the USB 2.0 D+/D- lines on cable connection,
-so the gadget never announces itself. The symptom is total silence rather than an error:
+Enumeration failed for a long time with this signature:
 
 ```
 /sys/class/udc/*/state          = not attached      (forever)
 /sys/class/udc/*/current_speed  = UNKNOWN
 ```
 
-with no attach, reset, or suspend event ever reaching `dmesg`, and the *host* logging no
-device attach either -- because a gadget that never pulls up D+ is indistinguishable from an
-empty port.
+and nothing -- no attach, reset or suspend -- in `dmesg` on either side. **The cause was the
+cable on the data leg.** Swapping it for a different one produced immediate enumeration at
+high speed.
 
-Confirmed on this hardware, and worth recording because every part of it points away from
-the real cause:
+This failure gives you no diagnostic signal at all. A gadget that never sees VBUS stays
+dormant, never asserts its D+ pull-up, and is indistinguishable from an empty port: the host
+logs nothing, the device logs nothing, and every layer above looks healthy. `dwc2`'s
+debugfs is the one place it shows:
 
-- Not the cable. The same cable and the same physical Pi worked on the April 2025 image.
-- Not the console. Reproduced with the data leg in one of the Pi's own USB-A ports, with
-  no console involved at all.
-- Not the configuration. `dr_mode=peripheral`, `status=okay`, a UDC present and bound,
-  `maximum_speed=high-speed`, `libcomposite` loaded -- all correct, and matching notes from
-  a previously working setup.
-- Not fixable from userspace. Writing `connect` to the UDC's `soft_connect` succeeds and
-  changes nothing, because `dwc2` gates the pull-up on a VBUS session it never sees.
-
-Tested and still broken on **both 6.18.34 and 6.18.39** -- upgrading within the 6.18 line
-does not help. The Raspberry Pi apt repo offers nothing older, so there is no apt route back
-to a working kernel.
-
-Known-good: a Bookworm image (this hardware last worked on one flashed around April 2025).
-The reliable fix is to reflash such an image. `rpi-update` to a pre-regression kernel is the
-remote-only alternative, at the cost of running an unsupported tool with a Trixie userland.
-
-Everything else on the Pi is already scripted, so re-provisioning after a reflash is short:
-
-```bash
-git clone https://github.com/kchellappan/rpi_gamepad_bridge.git && cd rpi_gamepad_bridge
-sudo ./scripts/install_deps.sh          # optional; build.sh falls back to plain g++
-./scripts/build.sh
-sudo ./scripts/enable_gadget_mode.sh && sudo reboot
-sudo ./scripts/install_services.sh
 ```
+DCTL=0x00000000    SftDiscon clear -- the driver is NOT holding the line down
+DSTS=0x00000003    SuspSts set -- suspended, waiting for a session that never starts
+```
+
+If enumeration does not happen, change the cable before suspecting anything else.
+
+### Note on kernel versions
+
+There is an upstream report that on Trixie with kernel 6.18, `dwc2` never drives the D+/D-
+lines. This project hit an identical-looking symptom on 6.18.34 and 6.18.39 and concluded
+it had reproduced that regression. **That conclusion was wrong** -- those tests were run with
+the faulty cable, which produces exactly the same silence. The regression has *not* been
+reproduced here with known-good hardware.
+
+Current verified configuration is Bookworm with kernel `6.6.51+rpt-rpi-2712` (held via
+`apt-mark hold`). Whether 6.18 works with a good cable is untested; if you want to move to
+Trixie, that is a single experiment rather than a known blocker.
 
 ### Input peripheral
 
@@ -305,24 +296,24 @@ Tested on an x86 Linux box, substituting a regular file for `/dev/hidg0`:
   through the socket produced byte-identical HID output. This is what the
   `emits_canonical()` flag protects -- see below.
 
-Verified on the target hardware (Pi 5 Model B Rev 1.0, Debian 13, kernel 6.18.34, arm64):
+Verified on the target hardware (Pi 5 Model B Rev 1.0, Bookworm, kernel 6.6.51, arm64):
 
-- Builds clean on gcc 14 / aarch64 with `-Wall -Wextra -Wpedantic`, via both cmake and the
-  bare-g++ fallback.
-- `dwc2` comes up in peripheral mode: `usb@480000 status=okay dr_mode=peripheral`, UDC
-  `1000480000.usb` present, `maximum_speed=high-speed` -- which is the 1ms polling interval
-  we wanted, and confirms there is nothing to tune in the descriptor.
-- The gadget enumerates: `/dev/hidg0` is created, and the 76-byte report descriptor reads
-  back byte-identical to the one written.
-- `gpb-discover` identifies the Stadia controller and its capabilities. The axis layout is
-  confirmed: sticks on `ABS_X`/`ABS_Y` and `ABS_Z`/`ABS_RZ`, triggers on
-  `ABS_GAS`/`ABS_BRAKE`, d-pad on `ABS_HAT0X`/`ABS_HAT0Y`. Note the sticks report
-  `min=1 max=255`, not `0..255`, which is why axis ranges are read from the kernel with
-  `EVIOCGABS` rather than assumed.
-- `gpbridge` runs end to end against the real controller and the real gadget: binds 8
-  axes and 12 buttons, grabs the device, and idles cleanly with no host attached.
+- Builds clean on gcc 12/14 and aarch64 with `-Wall -Wextra -Wpedantic`, via both cmake and
+  the bare-g++ fallback.
+- `dwc2` peripheral mode, gadget creation, and **enumeration**: the host sees
+  `0f0d:00c1 Hori Co., Ltd HORIPAD for Nintendo Switch` at **high speed**, and the HID
+  descriptor parses into a working gamepad input device.
+- **Full round trip through real USB.** Injecting states over the socket and reading them
+  back off the host's own USB stack reproduces them exactly -- axes, hat, and every button
+  bit landing where the descriptor says it should.
+- **Measured latency: 0.8-1.0 ms** for inject -> gadget -> host USB -> evdev. That is the
+  1 ms high-speed polling interval, confirming the interval dominates and that there is
+  nothing left to win in userspace.
+- Controller input: axis ranges read via `EVIOCGABS` (the Stadia's sticks report
+  `min=1 max=255`), mapping measured with `gpb-discover wizard`, bit-exact capture/replay,
+  hot-plug recovery, and both services surviving reboot.
 
-Still unverified, because each needs a human or a console in the loop:
+Still unverified, because each needs a human or a console in the loop:Still unverified, because each needs a human or a console in the loop:
 
 - **Whether the gadget ever enumerates.** Blocked on the Trixie/6.18 `dwc2` regression
   above, not on anything in this repo: the Pi has never seen a host attach, so nothing
@@ -385,11 +376,12 @@ emits_canonical()` marks sources that already speak post-transform action space
 
 ## Status
 
-Stadia -> Switch implemented end to end and mapped against real hardware. The input half is
-proven: the controller reads correctly, states normalize correctly, and the bridge runs as a
-service. The gadget is created and the UDC reports `maximum_speed=high-speed`.
+Working, pending a real console. The full chain is verified on hardware: controller in,
+normalized, encoded, out over USB as a HORIPAD, and read back correctly by a host at
+0.8-1.0 ms round trip. Both services come up on boot and recover from the controller's
+self-re-enumeration.
 
-Blocked on the output half by the Trixie / kernel 6.18 `dwc2` regression described above --
-an environment problem, not a code one. Everything downstream of enumeration is therefore
-still untested against real USB.
-Not yet done: XInput/PC sink, cross-compilation, the interactive latency harness.
+Remaining: plug into an actual Nintendo Switch. Also open is whether a Switch 2 is a viable
+target at all, given Nintendo's proprietary USB-C authentication.
+
+Not yet done: the XInput/PC sink, cross-compilation.
