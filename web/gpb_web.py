@@ -22,7 +22,10 @@ import secrets
 import shutil
 import subprocess
 import sys
+import signal
+import tempfile
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -517,26 +520,118 @@ def find_loopback_pad() -> dict:
     return {"found": False}
 
 
-def run_latency(device: str, samples: int) -> dict:
-    """Measure with the bridge stopped, writing straight to the gadget.
+class LatencyRun:
+    """A measurement in progress.
 
-    Nothing here goes through the bridge. An earlier version drove it over its Unix socket so
-    the measurement would follow the real serving path, but the bridge contributes a socket
-    read, an encode and a write -- microseconds, against a total set by a 1 ms polling
-    interval, and below what this can resolve. It bought nothing measurable in exchange for a
-    mode switch, two restarts, a restore-on-failure path, and a socket only root could reach.
+    The run is a child process writing one sample per line, so progress is just "read what
+    has been written so far". That keeps the server out of the timing path entirely -- it
+    never has to be scheduled promptly for a sample to be accurate, which a server-side
+    sampling loop would have required.
+
+    One run at a time: the bridge is stopped for the duration, and two concurrent runs would
+    both be writing to the gadget.
     """
-    if not LATENCY.is_file():
-        return {"ok": False, "error": "gpb-latency is not built"}
-    rc, out = run(["sudo", "-n", str(LATENCY), "--device", device, "--samples", str(samples)],
-                  timeout=max(60, samples // 2 + 30))
-    for line in out.splitlines():
-        if line.strip().startswith("{"):
+
+    def __init__(self):
+        self.proc = None
+        self.out = None
+        self.path = None
+        self.started = 0.0
+        self.bridge_was_active = False
+        self.lock = threading.Lock()
+
+    def active(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def start(self, device: str, duration_ms: int) -> dict:
+        with self.lock:
+            if self.active():
+                return {"ok": False, "error": "a measurement is already running"}
+            if not LATENCY.is_file():
+                return {"ok": False, "error": "gpb-latency is not built"}
+
+            self.bridge_was_active = unit_state(BRIDGE_UNIT)["active"] == "active"
+            systemctl("stop", BRIDGE_UNIT)   # it holds /dev/hidg0 open
+
+            self.path = Path(tempfile.gettempdir()) / f"gpb-latency-{os.getpid()}.out"
+            self.out = open(self.path, "w+")
             try:
-                return json.loads(line.strip())
-            except json.JSONDecodeError:
-                break
-    return {"ok": False, "error": out.strip() or f"measurement failed (rc={rc})"}
+                self.proc = subprocess.Popen(
+                    ["sudo", "-n", str(LATENCY), "--device", device,
+                     "--duration-ms", str(duration_ms)],
+                    stdout=self.out, stderr=subprocess.STDOUT, text=True)
+            except OSError as e:
+                self._restore()
+                return {"ok": False, "error": f"could not start: {e}"}
+            self.started = time.monotonic()
+            return {"ok": True, "duration_ms": duration_ms}
+
+    def read(self) -> dict:
+        """Samples so far, plus the summary once the child has finished."""
+        samples, summary = [], None
+        if self.path and self.path.exists():
+            try:
+                for line in self.path.read_text().splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("{"):
+                        try:
+                            summary = json.loads(line)
+                        except json.JSONDecodeError:
+                            pass
+                    else:
+                        try:
+                            samples.append(float(line))
+                        except ValueError:
+                            pass
+            except OSError:
+                pass
+        return {"samples": samples, "summary": summary}
+
+    def progress(self) -> dict:
+        data = self.read()
+        running = self.active()
+        if not running:
+            self._restore()
+        s = sorted(data["samples"])
+        stats = {}
+        if s:
+            stats = {
+                "n": len(s), "min_ms": s[0], "max_ms": s[-1],
+                "p50_ms": s[len(s) // 2],
+                "p95_ms": s[min(len(s) - 1, int(0.95 * (len(s) - 1)))],
+                "mean_ms": sum(s) / len(s),
+            }
+        return {"ok": True, "running": running,
+                "elapsed_ms": int((time.monotonic() - self.started) * 1000) if self.started else 0,
+                "samples": data["samples"], "summary": data["summary"], **stats}
+
+    def stop(self) -> dict:
+        with self.lock:
+            if self.proc is not None and self.proc.poll() is None:
+                # SIGINT rather than kill: the tool finishes the sample in flight and prints
+                # its summary, so stopping early does not discard the run.
+                self.proc.send_signal(signal.SIGINT)
+                try:
+                    self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+        return self.progress()
+
+    def _restore(self):
+        if self.out is not None:
+            try:
+                self.out.close()
+            except OSError:
+                pass
+            self.out = None
+        if self.bridge_was_active:
+            systemctl("start", BRIDGE_UNIT)
+            self.bridge_was_active = False
+
+
+LATENCY_RUN = LatencyRun()
 
 
 # --------------------------------------------------------------------------- auth
@@ -669,24 +764,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/latency/detect":
             return self._json(find_loopback_pad())
 
-        if path == "/api/latency/run":
+        if path == "/api/latency/start":
             pad = find_loopback_pad()
             if not pad.get("found"):
                 return self._json({"ok": False,
                                    "error": "the loopback cable is not connected"})
-            samples = max(10, min(int(payload.get("samples", 60)), 300))
+            duration = max(1000, min(int(payload.get("duration_ms", 60000)), 60000))
+            return self._json(LATENCY_RUN.start(pad["event"], duration))
 
-            # The bridge holds /dev/hidg0 open, so it has to stand aside. Restarting it in
-            # the failure path matters: leaving it stopped would present as a dead
-            # controller with nothing on screen to explain why.
-            was_active = unit_state(BRIDGE_UNIT)["active"] == "active"
-            try:
-                systemctl("stop", BRIDGE_UNIT)
-                result = run_latency(pad["event"], samples)
-            finally:
-                if was_active:
-                    systemctl("start", BRIDGE_UNIT)
-            return self._json(result)
+        if path == "/api/latency/progress":
+            return self._json(LATENCY_RUN.progress())
+
+        if path == "/api/latency/stop":
+            return self._json(LATENCY_RUN.stop())
 
         if path == "/api/wizard/begin":
             # The bridge grabs the controller exclusively, so it has to let go before the

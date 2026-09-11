@@ -23,6 +23,7 @@
 // button. That needs a GPIO bridged across a button's contacts.
 
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <linux/input.h>
 #include <poll.h>
@@ -56,6 +57,11 @@ static_assert(sizeof(Report) == 8, "the gadget's report is 8 bytes");
 
 constexpr uint8_t kB = 1 << 1;
 
+// Set by SIGINT/SIGTERM so a run can be stopped from the panel without losing the samples
+// already taken. sig_atomic_t because a handler may write it at any point.
+volatile sig_atomic_t g_stop = 0;
+void on_signal(int) { g_stop = 1; }
+
 uint64_t now_ns() {
   timespec ts{};
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -79,21 +85,29 @@ double pct(std::vector<double>& v, double p) {
 
 int main(int argc, char** argv) {
   std::string hidg_path = "/dev/hidg0", dev_path;
-  int samples = 60, settle_ms = 25, timeout_ms = 300;
+  int settle_ms = 25, timeout_ms = 300;
+  // A run continues until stopped or this elapses. Capped so a forgotten tab cannot hold
+  // the bridge down indefinitely -- the bridge is stopped for the duration.
+  int duration_ms = 60000;
+  const int kMaxDurationMs = 60000;
 
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--hidg" && i + 1 < argc) hidg_path = argv[++i];
     else if (a == "--device" && i + 1 < argc) dev_path = argv[++i];
-    else if (a == "--samples" && i + 1 < argc) samples = std::atoi(argv[++i]);
+    else if (a == "--duration-ms" && i + 1 < argc) duration_ms = std::atoi(argv[++i]);
     else if (a == "--settle-ms" && i + 1 < argc) settle_ms = std::atoi(argv[++i]);
   }
+  duration_ms = std::max(1000, std::min(duration_ms, kMaxDurationMs));
+
+  struct sigaction sa {};
+  sa.sa_handler = on_signal;
+  sigaction(SIGINT, &sa, nullptr);
+  sigaction(SIGTERM, &sa, nullptr);
   if (dev_path.empty()) {
     std::printf("{\"ok\":false,\"error\":\"--device is required (the loopback gamepad node)\"}\n");
     return 2;
   }
-  samples = std::max(1, std::min(samples, 500));
-
   const int dev = ::open(dev_path.c_str(), O_RDONLY | O_NONBLOCK);
   if (dev < 0) {
     std::printf("{\"ok\":false,\"error\":\"cannot open %s\"}\n", dev_path.c_str());
@@ -111,10 +125,10 @@ int main(int argc, char** argv) {
   }
 
   std::vector<double> ms;
-  ms.reserve(static_cast<size_t>(samples));
   int lost = 0;
+  const uint64_t deadline = now_ns() + static_cast<uint64_t>(duration_ms) * 1000000ull;
 
-  for (int i = 0; i < samples; ++i) {
+  for (int i = 0; !g_stop && now_ns() < deadline; ++i) {
     Report r;
     // Alternate, so every sample is a genuine change. Sending an identical report twice
     // would produce nothing for the host to notice.
@@ -144,8 +158,16 @@ int main(int argc, char** argv) {
       waited = static_cast<int>((now_ns() - t0) / 1000000ull);
     }
 
-    if (t1 == 0) ++lost;
-    else ms.push_back(static_cast<double>(t1 - t0) / 1e6);
+    if (t1 == 0) {
+      ++lost;
+    } else {
+      const double sample = static_cast<double>(t1 - t0) / 1e6;
+      ms.push_back(sample);
+      // One line per sample, flushed, so a reader can show progress while the run
+      // continues. The summary comes last and is the only line starting with '{'.
+      std::printf("%.3f\n", sample);
+      std::fflush(stdout);
+    }
     usleep(static_cast<useconds_t>(settle_ms) * 1000);
   }
 
@@ -164,9 +186,10 @@ int main(int argc, char** argv) {
   double sum = 0;
   for (double v : ms) sum += v;
 
-  std::printf("{\"ok\":true,\"n\":%zu,\"lost\":%d,\"min_ms\":%.3f,\"p50_ms\":%.3f,"
+  std::printf("{\"ok\":true,\"stopped\":%s,\"n\":%zu,\"lost\":%d,\"min_ms\":%.3f,\"p50_ms\":%.3f,"
               "\"p95_ms\":%.3f,\"max_ms\":%.3f,\"mean_ms\":%.3f,\"samples\":[",
-              ms.size(), lost, ms.front(), pct(ms, 0.50), pct(ms, 0.95), ms.back(),
+              g_stop ? "true" : "false", ms.size(), lost, ms.front(), pct(ms, 0.50),
+              pct(ms, 0.95), ms.back(),
               sum / static_cast<double>(ms.size()));
   for (size_t i = 0; i < ms.size(); ++i) std::printf("%s%.3f", i ? "," : "", ms[i]);
   std::printf("]}\n");

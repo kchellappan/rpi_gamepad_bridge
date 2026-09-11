@@ -7,7 +7,7 @@
 // nothing here can press a physical button; that would need a GPIO across a button's
 // contacts. Saying so in the results matters more than the figure being flattering.
 
-const L = { device: null, detectTimer: null, running: false };
+const L = { device: null, detectTimer: null, running: false, pollTimer: null, duration: 60000 };
 const lq = (id) => document.getElementById(id);
 
 function latShow(step) {
@@ -32,8 +32,8 @@ async function detectLoopback() {
 
 // A histogram says more than a mean here: USB polling quantises the result, so the shape is
 // the evidence that the interval dominates rather than something in software.
-function drawHistogram(samples) {
-  const svg = lq('lat-chart');
+function drawHistogram(samples, id) {
+  const svg = lq(id || 'lat-chart');
   svg.innerHTML = '';
   if (!samples || !samples.length) return;
   const W = 520, H = 120, pad = 18;
@@ -106,56 +106,114 @@ function wireLatency() {
     L.detectTimer = setInterval(detectLoopback, 2000);
   });
 
-  const close = () => {
+  const close = async () => {
     clearInterval(L.detectTimer);
+    clearInterval(L.pollTimer);
     L.detectTimer = null;
+    // Abandoning a run would leave the bridge stopped with nothing on screen explaining it.
+    if (L.running) { L.running = false; try { await api('/api/latency/stop', { method: 'POST' }); } catch (e) {} }
     lq('latency').hidden = true;
     refresh();
   };
-  lq('lat-close').addEventListener('click', () => { if (!L.running) close(); });
+  lq('lat-close').addEventListener('click', close);
   lq('lat-done').addEventListener('click', close);
+
+  function renderLive(p) {
+    lq('run-n').textContent = p.n || 0;
+    lq('run-p50').textContent = p.p50_ms ? p.p50_ms.toFixed(2) : '—';
+    lq('run-max').textContent = p.max_ms ? p.max_ms.toFixed(2) : '—';
+    const left = Math.max(0, Math.ceil((L.duration - (p.elapsed_ms || 0)) / 1000));
+    lq('run-left').textContent = String(left);
+    drawHistogram(p.samples, 'run-chart');
+  }
+
+  function showResults(p) {
+    const src = p.summary && p.summary.ok ? p.summary : p;
+    if (!src || !src.n) {
+      latShow('lat-setup');
+      lq('lat-detect').textContent = 'No samples were collected.';
+      lq('lat-detect').classList.add('error');
+      L.detectTimer = setInterval(detectLoopback, 2000);
+      return;
+    }
+    lq('lat-p50').textContent = src.p50_ms.toFixed(2);
+    lq('lat-min').textContent = src.min_ms.toFixed(2);
+    lq('lat-p95').textContent = src.p95_ms.toFixed(2);
+    lq('lat-max').textContent = src.max_ms.toFixed(2);
+    drawHistogram(p.samples, 'lat-chart');
+    lq('lat-detail').textContent =
+      `${src.n} samples over ${Math.round((p.elapsed_ms || 0) / 1000)}s, ${src.lost ?? 0} lost. `
+      + `Measured from writing a report to the gadget to the host observing it: USB and evdev. `
+      + `Neither the bridge's own processing (microseconds) nor the controller's latency is `
+      + `included; the latter cannot be measured this way at all.`;
+    lq('lat-interp').textContent = interpret(src);
+    latShow('lat-results');
+    lq('lat-sub').textContent = 'Bridge restarted.';
+  }
+
+  async function poll() {
+    let p;
+    try {
+      p = await api('/api/latency/progress', { method: 'POST' });
+    } catch (e) {
+      return;   // a transient failure should not abandon a run in progress
+    }
+    if (!L.running) return;
+    if (p.running) {
+      renderLive(p);
+    } else {
+      // The child hit its own time limit rather than being stopped from here.
+      clearInterval(L.pollTimer);
+      L.running = false;
+      showResults(p);
+      refresh(); refreshLogs();
+    }
+  }
 
   const run = async () => {
     if (L.running) return;
-    L.running = true;
     clearInterval(L.detectTimer);
     latShow('lat-running');
     lq('lat-sub').textContent = 'Running. The bridge is stopped until this finishes.';
-    const samples = parseInt(lq('lat-samples').value, 10) || 60;
+    renderLive({ samples: [] });
     try {
-      const r = await api('/api/latency/run', {
+      const r = await api('/api/latency/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ samples }),
+        body: JSON.stringify({ duration_ms: L.duration }),
       });
       if (!r.ok) {
         latShow('lat-setup');
-        lq('lat-detect').textContent = r.error || 'measurement failed';
+        lq('lat-detect').textContent = r.error || 'could not start';
         lq('lat-detect').classList.add('error');
         L.detectTimer = setInterval(detectLoopback, 2000);
-      } else {
-        lq('lat-p50').textContent = r.p50_ms.toFixed(2);
-        lq('lat-min').textContent = r.min_ms.toFixed(2);
-        lq('lat-p95').textContent = r.p95_ms.toFixed(2);
-        lq('lat-max').textContent = r.max_ms.toFixed(2);
-        drawHistogram(r.samples);
-        lq('lat-detail').textContent =
-          `${r.n} samples, ${r.lost} lost. Measured from writing a report to the gadget to `
-          + `the host observing it: USB and evdev. Neither the bridge's own processing `
-          + `(microseconds) nor the controller's latency is included; the latter cannot be `
-          + `measured this way at all.`;
-        lq('lat-interp').textContent = interpret(r);
-        latShow('lat-results');
-        lq('lat-sub').textContent = 'Bridge restarted.';
+        return;
       }
     } catch (e) {
       latShow('lat-setup');
-      lq('lat-detect').textContent = 'Measurement failed: ' + e;
+      lq('lat-detect').textContent = 'Could not start: ' + e;
       lq('lat-detect').classList.add('error');
+      return;
     }
+    L.running = true;
+    clearInterval(L.pollTimer);
+    L.pollTimer = setInterval(poll, 700);
+  };
+
+  const stop = async () => {
+    if (!L.running) return;
+    clearInterval(L.pollTimer);
     L.running = false;
+    try {
+      const p = await api('/api/latency/stop', { method: 'POST' });
+      showResults(p);
+    } catch (e) {
+      toast('could not stop cleanly: ' + e, true);
+    }
     refresh(); refreshLogs();
   };
+
+  lq('lat-stop').addEventListener('click', stop);
 
   lq('lat-run').addEventListener('click', run);
   lq('lat-again').addEventListener('click', run);

@@ -203,18 +203,24 @@
         <p class="warn-box">The bridge is stopped during the run, because it holds the gadget
           open, and restarted afterwards. The console receives nothing while it runs.</p>
         <div class="actions">
-          <button id="lat-run" class="btn btn-primary" disabled>Run measurement</button>
-          <label class="check">Samples
-            <select id="lat-samples" class="input" style="width:auto;margin-left:.4rem">
-              <option>30</option><option selected>60</option><option>120</option>
-            </select>
-          </label>
+          <button id="lat-run" class="btn btn-primary" disabled>Start measuring</button>
         </div>
+        <p class="hint">Runs until you stop it, or one minute, whichever comes first.</p>
       </div>
 
       <div id="lat-running" class="wiz-step" hidden>
-        <p class="prompt">Measuring…</p>
-        <p class="hint" id="lat-progress">Injecting inputs and timing when the host sees them.</p>
+        <div class="stat-row">
+          <div class="stat"><span class="stat-v" id="run-n">0</span><span class="stat-k">samples</span></div>
+          <div class="stat"><span class="stat-v" id="run-p50">—</span><span class="stat-k">median</span></div>
+          <div class="stat"><span class="stat-v" id="run-max">—</span><span class="stat-k">worst</span></div>
+          <div class="stat"><span class="stat-v" id="run-left">60</span><span class="stat-k">seconds left</span></div>
+        </div>
+        <svg id="run-chart" class="chart" role="img" aria-label="latency so far"></svg>
+        <p class="hint">Injecting inputs and timing when the host sees them. The worst case is
+          what a longer run is for — it needs time to show up.</p>
+        <div class="actions">
+          <button id="lat-stop" class="btn btn-primary">Stop and show results</button>
+        </div>
       </div>
 
       <div id="lat-results" class="wiz-step" hidden>

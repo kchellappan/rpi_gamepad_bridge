@@ -156,8 +156,12 @@ cable's data leg from the console into one of the Pi's own USB-A ports. `dwc2` (
 RP1 (host) are independent controllers, so the Pi enumerates its own gadget and can watch
 what it sends.
 
-The page walks through the setup, notices the loopback appearing, runs the samples, and puts
-your input source back afterwards.
+The page walks through the setup, notices the loopback appearing, and then measures
+continuously until you stop it or a minute elapses — whichever comes first. Samples,
+median and worst case update live, and stopping early keeps everything collected so far.
+
+The cap exists because the bridge is stopped for the duration: a forgotten tab should not
+hold it down indefinitely.
 
 What it measures:
 
@@ -173,8 +177,8 @@ The controller's own latency is not included and cannot be, because nothing in s
 press a physical button — that needs a GPIO bridged across a button's contacts. The results
 say so rather than quietly presenting a flattering number.
 
-Expect roughly **1 ms**. Measured on the reference setup: 60 samples, none lost, median
-0.945 ms, with 59 of 60 falling in the same 0.1 ms bucket. That single spike *is* the finding
+Expect roughly **1 ms**. Measured on the reference setup: median 0.94 ms, with essentially
+every sample falling in the same 0.1 ms bucket. That single spike *is* the finding
 — the USB polling interval quantises everything, and there is no software overhead visible
 above it.
 
