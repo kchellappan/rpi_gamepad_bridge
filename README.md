@@ -284,21 +284,28 @@ Verified on the target hardware (Pi 5 Model B Rev 1.0, Debian 13, kernel 6.18.34
 
 Still unverified, because each needs a human or a console in the loop:
 
-- **Which physical face button is which.** `caps` proves `BTN_SOUTH/EAST/NORTH/WEST` all
-  exist, but not where they sit -- see the alias trap below. `gpb-discover wizard` settles
-  it in about a minute.
-- Whether `ABS_BRAKE` is the left trigger and `ABS_GAS` the right (the conventional
-  assignment, and what the config assumes) rather than the reverse.
 - Whether the Switch accepts the descriptor. The Pokken report layout is reproduced from
-  prior art, not measured, and it is the piece with the most genuine uncertainty behind it.
+  prior art, not measured, and it is now the only piece with genuine uncertainty behind it.
+
+The controller mapping is no longer a guess: `config/stadia_to_switch.ini` holds what
+`gpb-discover wizard` measured on real hardware, including the inverted face-button aliases
+and the conventional `ABS_BRAKE`=left / `ABS_GAS`=right trigger assignment.
 
 ### Two traps worth knowing about
 
-**evdev's face-button aliases lie about position.** `BTN_X` is an alias for `BTN_NORTH` and
-`BTN_Y` for `BTN_WEST` -- but on an Xbox-layout pad, X sits *west* and Y sits *north*. A
-driver faithfully reporting its pad emits the code named `BTN_NORTH` for a physically
-western button. Any mapping derived by reading code names is a coin flip, which is why the
-wizard asks you to press the *top* button and records whatever actually arrives.
+**evdev's face-button aliases lie about position -- confirmed on hardware.** `BTN_X` is an
+alias for `BTN_NORTH` and `BTN_Y` for `BTN_WEST`, but on this layout X sits *west* and Y
+sits *north*. Measured on a real Stadia controller, the wizard produced:
+
+```
+button.BTN_NORTH = west
+button.BTN_WEST  = north
+```
+
+Reading the code names would have given the opposite and shipped X and Y swapped on the
+Switch -- which would have presented as a mapping *preference* complaint rather than a bug,
+and could have survived a long time. This is why the wizard asks you to press the *top*
+button and records whatever code actually arrives.
 
 **Transforms are not idempotent.** Deadzone and expo rescale a stick, so applying them to
 an already-transformed capture silently produces different values than the original run --
@@ -308,7 +315,7 @@ emits_canonical()` marks sources that already speak post-transform action space
 
 ## Status
 
-Stadia -> Switch implemented end to end. Bring-up complete on the target Pi 5: gadget
-enumerates at high speed, controller reads, bridge runs. Awaiting the button-mapping wizard
-run and a real Switch.
+Stadia -> Switch implemented end to end and mapped against real hardware. Gadget enumerates
+at high speed, the controller reads correctly, the bridge runs. The one thing left is
+plugging into an actual Switch.
 Not yet done: XInput/PC sink, cross-compilation, the interactive latency harness.

@@ -1,6 +1,7 @@
 #include "gpb/sources/evdev_source.hpp"
 
 #include <fcntl.h>
+#include <glob.h>
 #include <cstring>
 #include <sys/ioctl.h>
 #include <time.h>
@@ -170,11 +171,37 @@ void EvdevSource::autodetect_ranges() {
   }
 }
 
+// Resolve a device path that may contain shell wildcards.
+//
+// by-id paths embed the controller's serial number, so a literal path only ever works on
+// one physical unit. A glob lets a config be checked in and still work on someone else's
+// pad -- and survive replacing your own.
+static bool resolve_device_path(std::string& path, std::string& err) {
+  if (path.find_first_of("*?[") == std::string::npos) return true;
+
+  glob_t g{};
+  const int rc = ::glob(path.c_str(), GLOB_NOSORT, nullptr, &g);
+  if (rc != 0 || g.gl_pathc == 0) {
+    ::globfree(&g);
+    err = "no device matches " + path + " (is the controller plugged in?)";
+    return false;
+  }
+  const std::string first = g.gl_pathv[0];
+  if (g.gl_pathc > 1) {
+    std::fprintf(stderr, "[evdev] %zu devices match %s; using %s\n", g.gl_pathc,
+                 path.c_str(), first.c_str());
+  }
+  ::globfree(&g);
+  path = first;
+  return true;
+}
+
 bool EvdevSource::initialize(std::string& err) {
   if (path_.empty()) {
     err = "source.evdev.device is not set (run gpb-discover to find it)";
     return false;
   }
+  if (!resolve_device_path(path_, err)) return false;
   fd_ = ::open(path_.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
   if (fd_ < 0) {
     err = "cannot open " + path_ + ": " + std::strerror(errno);
