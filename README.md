@@ -20,9 +20,12 @@ essentially no software overhead on top of the wire.
 Because the bridge sits between an input and a host, anything that can produce gamepad state
 can drive a console that would otherwise only accept a first-party controller:
 
-- **Bridging non-traditional controllers.** Connect an input the console has never heard of —
-  a CAN joystick, custom or adaptive hardware, an accessibility device — to a host that only
-  speaks standard USB HID. Adding one is a new `InputSource`, not a rewrite.
+- **Bridging non-traditional control schemes.** Connect an input the console has never heard
+  of — a CAN joystick, custom or adaptive hardware, an accessibility device — to a host that
+  only speaks standard USB HID. The input does not have to be a gamepad, or even reach the
+  kernel through evdev: a source is anything that can produce state and expose a pollable
+  descriptor, so a fieldbus, a serial protocol or a network feed all qualify. Adding one is
+  a new `InputSource`, not a rewrite.
 - **Automation.** Drive a console programmatically over a socket: step through a fixed
   sequence, script a repetitive task, or exercise something the same way many times over.
 - **Imitation learning.** Capture human gameplay as training data for a VLA
@@ -143,8 +146,10 @@ InputSource (abstract)          GamepadState              OutputSink (abstract)
 ```
 
 - **`InputSource`** produces normalized state from a pollable fd. `EvdevSource` covers every
-  physical controller, since the kernel has already normalized them; the abstraction earns
-  its keep on sources evdev cannot express, such as the socket.
+  physical controller the kernel already normalizes, which is most of them — so the
+  abstraction is not there to abstract over gamepads. It earns its keep on inputs evdev
+  *cannot* express: the socket, a CAN bus, a serial link, a raw HID device deliberately
+  unbound from its driver.
 - **`OutputSink`** serializes state into its target's wire format. `initialize()` is separate
   from the hot path, leaving room for a sink that must complete an authentication handshake.
 - **`Transform`** is the mapping layer — deadzones, curves, remapping — and the hook for
