@@ -43,10 +43,14 @@ use it as a USB device with a plain cable. The splitter breaks the port out into
 power leg and a separate data leg, so the Pi stays powered from its own supply while the
 data leg goes to the host being controlled.
 
-This cable is known good: it has driven this exact board successfully before, on a
-Bookworm image flashed around April 2025.
+This cable is known good and is the right part. It has driven this exact board
+successfully, both in earlier work and in the verification recorded below.
 
-### The data-leg cable matters, and a bad one is silent
+**It is not the whole cable path, though.** The splitter's data leg still has to reach the
+host, and whatever cable bridges that gap must carry data. See the next section -- that
+intermediate cable is what cost this project a great deal of time.
+
+### A charge-only cable on the data leg is completely silent
 
 Enumeration failed for a long time with this signature:
 
@@ -55,28 +59,34 @@ Enumeration failed for a long time with this signature:
 /sys/class/udc/*/current_speed  = UNKNOWN
 ```
 
-and nothing -- no attach, reset or suspend -- in `dmesg` on either side. **The cause was the
-cable on the data leg.** Swapping it for a different one produced immediate enumeration at
-high speed.
+and nothing -- no attach, reset or suspend -- in `dmesg` on **either** side.
 
-This failure gives you no diagnostic signal at all. A gadget that never sees VBUS stays
-dormant, never asserts its D+ pull-up, and is indistinguishable from an empty port: the host
-logs nothing, the device logs nothing, and every layer above looks healthy. `dwc2`'s
-debugfs is the one place it shows:
+**The cause was the USB-A-to-C cable running from the splitter's data leg to the host.** It
+was a charge-only cable: power conductors present, D+/D- absent. The splitter itself was
+fine throughout. Swapping that one cable for a data-capable one produced immediate
+enumeration at high speed.
+
+This failure mode gives you no diagnostic signal anywhere. With no data lines, the gadget
+never sees a host, never asserts its D+ pull-up, and is indistinguishable from an empty
+port: the host logs nothing, the device logs nothing, and every layer above looks perfectly
+healthy. The only place the truth is visible is `dwc2`'s debugfs:
 
 ```
 DCTL=0x00000000    SftDiscon clear -- the driver is NOT holding the line down
 DSTS=0x00000003    SuspSts set -- suspended, waiting for a session that never starts
 ```
 
-If enumeration does not happen, change the cable before suspecting anything else.
+That register pair says the driver is presenting itself correctly and waiting for a session
+that physically cannot arrive. **If enumeration never happens, verify the data cable before
+suspecting anything else** -- charge-only USB-A-to-C cables are extremely common, visually
+identical to data ones, and will happily power a device while carrying no data at all.
 
 ### Note on kernel versions
 
 There is an upstream report that on Trixie with kernel 6.18, `dwc2` never drives the D+/D-
 lines. This project hit an identical-looking symptom on 6.18.34 and 6.18.39 and concluded
 it had reproduced that regression. **That conclusion was wrong** -- those tests were run with
-the faulty cable, which produces exactly the same silence. The regression has *not* been
+a charge-only data cable, which produces exactly the same silence. The regression has *not* been
 reproduced here with known-good hardware.
 
 Current verified configuration is Bookworm with kernel `6.6.51+rpt-rpi-2712` (held via
