@@ -33,24 +33,35 @@ dtoverlay=dwc2,dr_mode=peripheral
 The overlay pulls in the module itself, so `modules-load=dwc2` in `cmdline.txt` should be
 *omitted* to avoid conflicting with it.
 
-### USB-C OTG power/data splitter cable — **validated**
+### Powering the Pi while using its USB-C port as a device -- UNRESOLVED
 
+The Pi 5 has exactly one USB-C port and it is both the power input and the only
+OTG-capable data port. Using it as a USB device therefore requires powering the board some
+other way, and that is the part that is not yet working.
+
+**The splitter cable does not work on the Pi 5.** This cable was tried:
 <https://www.amazon.com/Charging-Adapter-Splitter-Compatible-Chromecast/dp/B0B5MPCJF5/>
 
-This specific cable has been validated in past work for exactly this purpose.
+Symptom: `/sys/class/udc/*/state` stays `not attached` forever and `current_speed` stays
+`UNKNOWN`, with no attach, reset, or suspend event ever appearing in `dmesg`. Confirmed
+against both a Switch 2 dock's USB-A port and, as a control, one of the Pi's own USB-A
+ports -- the gadget never enumerated in either case, and the *host* side logged no device
+attach either.
 
-**Why it is required:** the Pi 5 has a single USB-C port, and it is both the power input and
-the only OTG-capable data port. You cannot simultaneously power the Pi from that port and
-use it as a USB device with a plain cable. The splitter breaks the port out into a separate
-power leg and a separate data leg, so the Pi stays powered from its own supply while the
-data leg goes to the host being controlled.
+The likely cause: `dwc2` detects attachment by sensing the **host's** VBUS on the USB-C
+connector. Splitters of this type isolate VBUS on the data leg -- that is how they stop the
+host backfeeding the Pi's supply -- so D+/D- may be connected perfectly while the gadget
+controller never fires an attach event and stays dormant. Data would flow fine if it ever
+started; it simply never starts.
 
-**Cable caveat to keep in mind:** there is a known Raspberry Pi kernel regression
-([raspberrypi/linux#6289](https://github.com/raspberrypi/linux/issues/6289)) where `dwc2`
-gadget mode on the Pi 5 breaks over **USB-C-to-USB-C** connections on some kernel versions,
-while continuing to work through a **USB-A** adapter. If gadget enumeration ever fails after
-a kernel update, this is the first thing to check. (For a Switch specifically, the dock's
-ports are USB-A, so the common path is the safe one.)
+Note that "validated in past work" for a cable like this may have been on a **Pi 4**, whose
+USB-C port has different VBUS-sense behaviour. It does not carry over to a Pi 5.
+
+**The approach to try instead:** power the board from the **GPIO 5V pins** (or a PoE HAT)
+and run a *plain* USB-C cable from the Pi's USB-C port to the host. The host then supplies
+VBUS on that port, which is exactly the signal `dwc2` needs, while the Pi's actual power
+comes from elsewhere and no splitter sits in the data path. Powering a Pi 5 over GPIO
+bypasses the PMIC's input protection, so it wants a solid supply.
 
 ### Input peripheral
 
@@ -284,8 +295,16 @@ Verified on the target hardware (Pi 5 Model B Rev 1.0, Debian 13, kernel 6.18.34
 
 Still unverified, because each needs a human or a console in the loop:
 
+- **Whether the gadget ever enumerates.** Blocked on the power/data cabling above, not on
+  code: the Pi has never seen a host attach, so nothing downstream of that has been
+  exercised against real USB.
 - Whether the Switch accepts the descriptor. The Pokken report layout is reproduced from
-  prior art, not measured, and it is now the only piece with genuine uncertainty behind it.
+  prior art, not measured.
+- **Whether a Switch 2 is a viable target at all.** Nintendo gates the Switch 2's USB-C
+  port behind proprietary vendor-defined signalling, which broke third-party docks and was
+  re-broken by a later firmware update. Whether that gating also covers ordinary USB HID
+  devices on the dock's USB-A ports is unknown. The original Switch remains the validated
+  target.
 
 The controller mapping is no longer a guess: `config/stadia_to_switch.ini` holds what
 `gpb-discover wizard` measured on real hardware, including the inverted face-button aliases
@@ -337,7 +356,11 @@ emits_canonical()` marks sources that already speak post-transform action space
 
 ## Status
 
-Stadia -> Switch implemented end to end and mapped against real hardware. Gadget enumerates
-at high speed, the controller reads correctly, the bridge runs. The one thing left is
-plugging into an actual Switch.
+Stadia -> Switch implemented end to end and mapped against real hardware. The input half is
+proven: the controller reads correctly, states normalize correctly, and the bridge runs as a
+service. The gadget is created and the UDC reports `maximum_speed=high-speed`.
+
+Blocked on the output half: the Pi has never seen a USB host attach, because of the
+power/data cabling problem described above. Everything downstream of enumeration is
+therefore still untested against real USB.
 Not yet done: XInput/PC sink, cross-compilation, the interactive latency harness.
