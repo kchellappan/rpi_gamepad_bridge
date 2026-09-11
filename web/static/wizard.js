@@ -159,6 +159,13 @@ async function nextStep() {
   }
   if (gen !== W.gen || !W.running) return;   // superseded while we were waiting
 
+  if (!res.ok && res.error === 'already_bound') {
+    // The user pressed something real; it is just spoken for. Saying so beats a silent
+    // timeout, especially on a pad with no spare control for this target.
+    const owner = W.mappings.find((m) => m.code === res.code);
+    toast(`${res.code} is already mapped to ${owner ? owner.label : 'another control'}`, true);
+  }
+
   if (res.ok) {
     const hat = /^ABS_HAT0[XY]$/.test(res.code);
     let targetName = step.target;

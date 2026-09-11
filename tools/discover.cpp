@@ -244,6 +244,12 @@ struct Capture {
   bool is_axis = false;
   std::string code;
   bool invert = false;
+  // A control the user pressed that is already bound to an earlier target. Without
+  // reporting this, such a press looks identical to pressing nothing: the step just times
+  // out. On a pad with few spare buttons -- a DualSense has no separate Create button, it
+  // reports BTN_SELECT -- that is the difference between a confusing dead end and an
+  // explanation.
+  std::string blocked_by;
 };
 
 Capture capture_control(int fd, const std::map<uint16_t, AbsInfo>& neutral,
@@ -264,6 +270,8 @@ Capture capture_control(int fd, const std::map<uint16_t, AbsInfo>& neutral,
       continue;
     }
     while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
+      if (accept_button && e.type == EV_KEY && e.value == 1 && exclude_keys.count(e.code))
+        out.blocked_by = gpb::evdev_key_name(e.code);
       if (accept_button && e.type == EV_KEY && e.value == 1 && !exclude_keys.count(e.code)) {
         out.ok = true;
         out.is_axis = false;
@@ -284,7 +292,11 @@ Capture capture_control(int fd, const std::map<uint16_t, AbsInfo>& neutral,
       auto it = neutral.find(e.code);
       if (it == neutral.end()) continue;
       observed.insert(e.code);   // it reports; from now on we can hold it to its neutral
-      if (exclude_axes.count(e.code)) continue;
+      if (exclude_axes.count(e.code)) {
+        const int32_t d = e.value - it->second.neutral;
+        if (std::abs(d) > it->second.span / 3) out.blocked_by = gpb::evdev_abs_name(e.code);
+        continue;
+      }
 
       const int32_t base = it->second.neutral;
       if (std::abs(e.value - base) > std::abs(extreme[e.code] - base)) extreme[e.code] = e.value;
@@ -495,7 +507,12 @@ int cmd_capture(const char* path, const std::string& kind, int timeout_ms,
   close(fd);
 
   if (!c.ok) {
-    std::printf("{\"ok\":false,\"error\":\"timeout\"}\n");
+    if (!c.blocked_by.empty()) {
+      std::printf("{\"ok\":false,\"error\":\"already_bound\",\"code\":\"%s\"}\n",
+                  c.blocked_by.c_str());
+    } else {
+      std::printf("{\"ok\":false,\"error\":\"timeout\"}\n");
+    }
     return 0;   // a timeout is a normal outcome the caller handles, not a failure to run
   }
   std::printf("{\"ok\":true,\"kind\":\"%s\",\"code\":\"%s\",\"invert\":%s}\n",
