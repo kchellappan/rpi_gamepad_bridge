@@ -170,6 +170,22 @@ heartbeat_hz = 0
 [profile.left]
 deadzone = 0
 EOF
+    # The resting baseline must be the pad's true neutral. The web wizard samples this once
+    # and hands it to every capture, because each capture is its own process: re-sampling
+    # per step means a control still being HELD is recorded as its own neutral, and
+    # releasing it then reads as a deflection that answers the following prompt.
+    BASE="$(sudo -n "$BUILD/gpb-discover" baseline "$NODE" 2>/dev/null)"
+    if python3 -c "
+import json, sys
+a = json.loads(sys.argv[1])['axes']
+assert a['ABS_X'] == 128, a
+assert a['ABS_GAS'] == 0, a
+" "$BASE" 2>/dev/null; then
+      ok "baseline reports the pad's resting position (sticks centred, triggers released)"
+    else
+      bad "baseline returned unexpected resting values" "$BASE"
+    fi
+
     sudo -n "$BRIDGE" --config "$TMP/ev.ini" > "$TMP/b3.log" 2>&1 &
     BPID=$!
     wait $PADPID 2>/dev/null
