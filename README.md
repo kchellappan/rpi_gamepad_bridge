@@ -14,6 +14,37 @@ a generic, source-agnostic / sink-agnostic architecture.
 
 ---
 
+## Verified configuration
+
+Everything in this repo has been verified against **exactly one** combination of hardware
+and OS. Nothing else has been tried, and two of the entries below were the difference
+between working and silently not working, so they are listed as specifically as possible.
+
+| | Verified |
+|---|---|
+| Board | Raspberry Pi 5 Model B Rev 1.0 |
+| OS | Raspberry Pi OS **Bookworm**, `2024-11-19` arm64 image |
+| Kernel | `6.6.51+rpt-rpi-2712`, pinned with `apt-mark hold` |
+| Power/data split | the [USB-C OTG splitter](https://www.amazon.com/Charging-Adapter-Splitter-Compatible-Chromecast/dp/B0B5MPCJF5/) linked below |
+| Data leg to host | a **data-capable** USB-A-to-C cable (a charge-only one fails silently) |
+| Controller | Google Stadia Controller rev. A, wired |
+| Host | the Pi's own USB-A port, as a loopback |
+
+**Explicitly not verified:**
+
+- **Any other OS or kernel.** Trixie / kernel 6.18 showed an identical failure, but that was
+  later traced to the charge-only cable and never retested with working hardware, so 6.18 is
+  unproven in both directions rather than known-bad. See the kernel note below.
+- **Any other splitter or data cable.** Both are load-bearing and both fail silently.
+- **A real console.** The output path is proven against a Linux USB host, not a Nintendo
+  Switch. The descriptor comes from a configuration that did enumerate on a Switch, but this
+  repo has not been plugged into one.
+- **Switch 2.** Nintendo gates its USB-C port behind proprietary authentication; whether that
+  extends to HID devices on the dock's USB-A ports is unknown.
+- **Other controllers.** They route through the same `EvdevSource`, so a `gpb-discover
+  wizard` run should be all that is needed -- but only the Stadia has actually been run.
+- **The XInput/PC sink and cross-compilation.** Not implemented.
+
 ## Hardware
 
 ### Raspberry Pi 5
@@ -386,12 +417,11 @@ emits_canonical()` marks sources that already speak post-transform action space
 
 ## Status
 
-Working, pending a real console. The full chain is verified on hardware: controller in,
-normalized, encoded, out over USB as a HORIPAD, and read back correctly by a host at
-0.8-1.0 ms round trip. Both services come up on boot and recover from the controller's
-self-re-enumeration.
+Working within the single verified configuration above, pending a real console.
 
-Remaining: plug into an actual Nintendo Switch. Also open is whether a Switch 2 is a viable
-target at all, given Nintendo's proprietary USB-C authentication.
+The full chain is proven on hardware: controller in, normalized, encoded, out over USB as a
+HORIPAD, and read back correctly by a Linux host at 0.8-1.0 ms round trip. Both services
+come up on boot and recover from the controller's self-re-enumeration.
 
-Not yet done: the XInput/PC sink, cross-compilation.
+Remaining: plug into an actual Nintendo Switch. Then the XInput/PC sink and
+cross-compilation, both scoped as later work from the outset.
