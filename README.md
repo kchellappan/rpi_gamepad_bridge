@@ -151,8 +151,16 @@ observed-axis rule, and rejecting an `absinfo` value that falls outside the axis
 
 ## Configuration
 
-One INI file selects the source and sink, maps the controller, and shapes the sticks. See
-[`config/stadia_to_switch.ini`](config/stadia_to_switch.ini) for a fully commented example.
+One INI file selects the source and sink, maps the controller, and shapes the sticks. Two
+fully commented examples ship, both measured on real hardware:
+
+- [`config/stadia_to_switch.ini`](config/stadia_to_switch.ini) — Google Stadia controller
+- [`config/dualsense_to_switch.ini`](config/dualsense_to_switch.ini) — Sony DualSense (PS5)
+
+They are worth reading side by side. The two pads disagree about which axis carries the
+right stick, whether the d-pad is a hat or four buttons, and — for the same two evdev codes
+— which physical positions they describe. That disagreement is the case for measuring a
+controller rather than assuming it.
 
 | Key | Meaning |
 |---|---|
