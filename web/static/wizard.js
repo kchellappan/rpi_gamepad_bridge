@@ -16,6 +16,7 @@ const W = {
   running: false,
   gen: 0,             // invalidates an in-flight capture when the user moves on
   abort: null,        // AbortController for the capture currently being awaited
+  neutral: null,      // resting axis values, sampled once before the first prompt
 };
 
 const wq = (id) => document.getElementById(id);
@@ -160,6 +161,9 @@ async function nextStep(keepNote) {
       body: JSON.stringify({
         device: W.device, kind: step.control.capture || 'any',
         timeout_ms: 8000, exclude,
+        // Measured once while the pad was untouched. Each capture is its own process, so
+        // without carrying this forward a held control is mistaken for its own neutral.
+        neutral: W.neutral,
       }),
     });
   } catch (e) {
@@ -259,11 +263,23 @@ function wireWizard() {
     if (!W.device || !W.target) return toast('pick a controller and a target', true);
     try { await api('/api/wizard/begin', { method: 'POST' }); }
     catch (e) { return toast('could not stop the bridge: ' + e, true); }
+
+    // Sample the resting position before the first prompt, while nothing is being touched.
+    try {
+      const base = await api('/api/wizard/baseline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device: W.device }),
+      });
+      W.neutral = base.ok ? base.axes : null;
+    } catch (e) { W.neutral = null; }
+
     W.steps = buildSteps(W.target);
     W.index = 0; W.mappings = []; W.running = true;
     wq('wiz-sub').textContent = 'Press the control on YOUR pad that should act as the highlighted one.';
     drawTarget(W.target);
     show('wiz-capture');
+    note('');
     nextStep();
   });
 

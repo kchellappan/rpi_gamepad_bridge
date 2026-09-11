@@ -450,13 +450,42 @@ int cmd_wizard(const char* path) {
   return 0;
 }
 
+// ---------------------------------------------------------------- baseline / capture (JSON)
+
+// Sample the pad's resting position once, for the web wizard to hold and hand back to every
+// subsequent capture.
+//
+// This exists because each web capture is a separate process. Re-sampling per step means a
+// control still being HELD is recorded as its own neutral -- the pad then looks settled, and
+// releasing it reads as a fresh deflection that satisfies the following prompt. The terminal
+// wizard never had this problem because it samples once and keeps the value.
+int cmd_baseline(const char* path) {
+  int fd = open(path, O_RDONLY | O_NONBLOCK);
+  if (fd < 0) {
+    std::printf("{\"ok\":false,\"error\":\"cannot open device\"}\n");
+    return 1;
+  }
+  const auto neutral = sample_neutral(fd);
+  close(fd);
+
+  std::printf("{\"ok\":true,\"axes\":{");
+  bool first = true;
+  for (const auto& [code, a] : neutral) {
+    if (!first) std::printf(",");
+    first = false;
+    std::printf("\"%s\":%d", gpb::evdev_abs_name(code).c_str(), a.neutral);
+  }
+  std::printf("}}\n");
+  return 0;
+}
+
 // ---------------------------------------------------------------- capture (machine readable)
 
 // Emits one JSON object describing a single captured control. Used by the web wizard, which
 // drives the capture step by step from the browser and needs a parseable answer rather than
 // a human-readable prompt.
 int cmd_capture(const char* path, const std::string& kind, int timeout_ms,
-                const std::string& exclude_csv) {
+                const std::string& exclude_csv, const std::string& neutral_csv) {
   const bool accept_button = (kind == "button" || kind == "any");
   const bool accept_axis = (kind == "axis" || kind == "any");
   if (!accept_button && !accept_axis) {
@@ -492,7 +521,30 @@ int cmd_capture(const char* path, const std::string& kind, int timeout_ms,
     }
   }
 
-  const auto neutral = sample_neutral(fd);
+  auto neutral = sample_neutral(fd);
+
+  // Override with the baseline captured while the pad was untouched, when the caller has
+  // one. Without it a control still being held is taken for its own resting position.
+  if (!neutral_csv.empty()) {
+    std::string csv = neutral_csv;
+    while (!csv.empty()) {
+      const size_t comma = csv.find(',');
+      const std::string item = csv.substr(0, comma);
+      const size_t eq = item.find('=');
+      if (eq != std::string::npos) {
+        bool ok = false;
+        const uint16_t code = gpb::evdev_code_from_name(item.substr(0, eq), ok);
+        auto it = neutral.find(code);
+        if (ok && it != neutral.end()) {
+          it->second.neutral = std::atoi(item.substr(eq + 1).c_str());
+          it->second.confirmed = true;
+        }
+      }
+      if (comma == std::string::npos) break;
+      csv = csv.substr(comma + 1);
+    }
+  }
+
   std::set<uint16_t> observed;
   for (const auto& [code, a] : neutral)
     if (a.confirmed) observed.insert(code);
@@ -526,25 +578,28 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr,
                  "usage:\n  %s list\n  %s caps <device>\n  %s wizard <device>\n"
+                 "  %s baseline <device>\n"
                  "  %s capture <device> [--kind button|axis|any] [--timeout-ms N] "
-                 "[--exclude CODE,CODE]\n",
-                 argv[0], argv[0], argv[0], argv[0]);
+                 "[--exclude CODE,CODE] [--neutral CODE=N,CODE=N]\n",
+                 argv[0], argv[0], argv[0], argv[0], argv[0]);
     return 2;
   }
   const std::string cmd = argv[1];
   if (cmd == "list") return cmd_list();
   if (cmd == "caps" && argc >= 3) return cmd_caps(argv[2]);
   if (cmd == "wizard" && argc >= 3) return cmd_wizard(argv[2]);
+  if (cmd == "baseline" && argc >= 3) return cmd_baseline(argv[2]);
   if (cmd == "capture" && argc >= 3) {
-    std::string kind = "any", exclude;
+    std::string kind = "any", exclude, neutral;
     int timeout_ms = 8000;
     for (int i = 3; i < argc; ++i) {
       const std::string a = argv[i];
       if (a == "--kind" && i + 1 < argc) kind = argv[++i];
       else if (a == "--timeout-ms" && i + 1 < argc) timeout_ms = std::atoi(argv[++i]);
       else if (a == "--exclude" && i + 1 < argc) exclude = argv[++i];
+      else if (a == "--neutral" && i + 1 < argc) neutral = argv[++i];
     }
-    return cmd_capture(argv[2], kind, timeout_ms, exclude);
+    return cmd_capture(argv[2], kind, timeout_ms, exclude, neutral);
   }
   std::fprintf(stderr, "unknown command\n");
   return 2;

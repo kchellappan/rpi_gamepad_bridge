@@ -234,7 +234,28 @@ def get_target(target_id: str) -> dict | None:
 
 # --------------------------------------------------------------------------- wizard
 
-def capture_once(device: str, kind: str, timeout_ms: int, exclude: list[str]) -> dict:
+def read_baseline(device: str) -> dict:
+    """The pad's resting position, sampled once while it is untouched.
+
+    Every capture is a separate process, so without this each one re-samples and a control
+    still being HELD is taken for its own neutral. The pad then looks settled, and releasing
+    it reads as a fresh deflection that satisfies the next prompt -- which is how moving one
+    stick could answer two steps.
+    """
+    if not DISCOVER.is_file():
+        return {"ok": False, "error": "gpb-discover is not built"}
+    rc, out = run([str(DISCOVER), "baseline", device], timeout=15)
+    for line in out.splitlines():
+        if line.strip().startswith("{"):
+            try:
+                return json.loads(line.strip())
+            except json.JSONDecodeError:
+                break
+    return {"ok": False, "error": out.strip() or f"baseline failed (rc={rc})"}
+
+
+def capture_once(device: str, kind: str, timeout_ms: int, exclude: list[str],
+                 neutral: dict | None = None) -> dict:
     """Ask gpb-discover for one control.
 
     Capture runs in the C++ tool rather than being reimplemented here, so the web wizard and
@@ -247,6 +268,9 @@ def capture_once(device: str, kind: str, timeout_ms: int, exclude: list[str]) ->
     cmd = [str(DISCOVER), "capture", device, "--kind", kind, "--timeout-ms", str(timeout_ms)]
     if exclude:
         cmd += ["--exclude", ",".join(exclude)]
+    if neutral:
+        cmd += ["--neutral", ",".join(f"{k}={int(v)}" for k, v in neutral.items()
+                                     if isinstance(v, (int, float)))]
     rc, out = run(cmd, timeout=max(6, timeout_ms // 1000 + 8))
     for line in out.splitlines():
         line = line.strip()
@@ -515,15 +539,24 @@ class Handler(BaseHTTPRequestHandler):
             rc, out = systemctl("stop", BRIDGE_UNIT)
             return self._json({"ok": rc == 0, "message": out.strip() or "bridge stopped"})
 
+        if path == "/api/wizard/baseline":
+            device = payload.get("device", "")
+            known = {d["path"] for d in list_input_devices()} | {d["event"] for d in list_input_devices()}
+            if device not in known:
+                return self._json({"ok": False, "error": "unknown device"})
+            return self._json(read_baseline(device))
+
         if path == "/api/wizard/capture":
             device = payload.get("device", "")
             if device not in {d["path"] for d in list_input_devices()} and \
                device not in {d["event"] for d in list_input_devices()}:
                 return self._json({"ok": False, "error": "unknown device"})
+            neutral = payload.get("neutral")
             result = capture_once(device,
                                   payload.get("kind", "any"),
                                   int(payload.get("timeout_ms", 8000)),
-                                  [c for c in payload.get("exclude", []) if isinstance(c, str)])
+                                  [c for c in payload.get("exclude", []) if isinstance(c, str)],
+                                  neutral if isinstance(neutral, dict) else None)
             return self._json(result)
 
         if path == "/api/wizard/finish":
