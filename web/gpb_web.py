@@ -28,13 +28,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 REPO = Path(os.environ.get("GPB_REPO", Path(__file__).resolve().parent.parent))
-ENVFILE = Path(os.environ.get("GPB_ENVFILE", "/etc/gpbridge/active.env"))
+ENVFILE = Path(os.environ.get("GPB_ENVFILE", "/var/lib/gpbridge/active.env"))
 PASSFILE = Path(os.environ.get("GPB_PASSFILE", "/etc/gpbridge/webpass"))
 USERFILE = Path(os.environ.get("GPB_USERFILE", "/etc/gpbridge/webuser"))
 DEFAULT_USER = "admin"
 PORT = int(os.environ.get("GPB_PORT", "8080"))
 STATIC = Path(__file__).resolve().parent / "static"
 CONFIG_DIR = REPO / "config"
+TARGET_DIR = REPO / "targets"
+STATUS_FILE = Path(os.environ.get("GPB_STATUS", "/var/lib/gpbridge/status.json"))
+DISCOVER = REPO / "build" / "gpb-discover"
 
 BRIDGE_UNIT = "gpbridge.service"
 GADGET_UNIT = "gpb-gadget.service"
@@ -131,6 +134,9 @@ def write_env(config: str, source: str) -> tuple[bool, str]:
     )
     with _env_lock:
         try:
+            # The temp file must live in the same directory as the target: os.replace is
+            # only atomic within a filesystem, and creating it here needs write permission
+            # on the DIRECTORY, not merely ownership of the file being replaced.
             tmp = ENVFILE.with_suffix(".env.tmp")
             tmp.write_text(body)
             os.replace(tmp, ENVFILE)     # atomic: never leave a half-written env file
@@ -178,6 +184,289 @@ def config_summary(path: Path) -> dict:
     except OSError:
         pass
     return out
+
+
+# --------------------------------------------------------------------------- health
+
+def bridge_status() -> dict:
+    """The bridge's own account of whether its reports are reaching the host."""
+    try:
+        return json.loads(STATUS_FILE.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def assess(bridge: dict, udc: dict, status: dict) -> dict:
+    """Decide what to actually tell the user about the link.
+
+    "A host is attached" and "the host is accepting reports" are different claims, and only
+    the second one means anything. They came apart on real hardware: /sys/class/udc sat at
+    state=configured, speed=high-speed, while the interrupt endpoint was disabled and every
+    write failed. The panel reported a healthy connection throughout an outage that made the
+    console completely unresponsive, which is worse than showing nothing at all.
+
+    So the reassuring answer requires evidence from the bridge, not just from sysfs.
+    """
+    if bridge.get("active") != "active":
+        return {"level": "idle", "headline": "Bridge stopped",
+                "detail": "Nothing is being sent. Start the bridge to resume."}
+
+    if not udc.get("present"):
+        return {"level": "bad", "headline": "No USB gadget",
+                "detail": "Peripheral mode is not enabled on this Pi."}
+
+    attached = udc.get("state") == "configured"
+    if not attached:
+        return {"level": "idle", "headline": "No console connected",
+                "detail": f"The USB link reports \"{udc.get('state')}\". "
+                          "Check the cable into the console."}
+
+    if not status:
+        return {"level": "unknown", "headline": "Connected",
+                "detail": "The bridge is not reporting its health yet."}
+
+    stale = status.get("since_write_ok_ms", 0)
+    failures = status.get("write_failures", 0)
+    never = not status.get("ever_wrote", False)
+
+    # Attached, but nothing is getting through. This is the state that previously displayed
+    # as a healthy connection.
+    if never and failures > 20:
+        return {"level": "bad", "headline": "Console is not accepting input",
+                "detail": "The USB link says it is connected, but no report has ever reached "
+                          "it. Re-enumerating the gadget usually clears this; the cable may "
+                          "need reseating at the console."}
+    if not never and (failures > 60 or stale > 4000):
+        return {"level": "bad", "headline": "Console stopped accepting input",
+                "detail": f"Reports were flowing, but none has landed for {stale // 1000}s. "
+                          "Try re-enumerating the gadget."}
+
+    return {"level": "ok", "headline": "Connected and sending",
+            "detail": f"{status.get('submits', 0)} reports sent."}
+
+
+# --------------------------------------------------------------------------- devices
+
+def list_input_devices() -> list[dict]:
+    """Controllers as the Pi sees them, preferring stable by-id paths.
+
+    Event numbers are assigned in probe order and move when a device is replugged, so a
+    by-id path is what belongs in a config. The event path is still reported because that is
+    what appears in logs.
+    """
+    out = []
+    by_id = Path("/dev/input/by-id")
+    seen_targets = set()
+    if by_id.is_dir():
+        for link in sorted(by_id.iterdir()):
+            if not link.name.endswith("event-joystick"):
+                continue
+            try:
+                resolved = link.resolve()
+            except OSError:
+                continue
+            seen_targets.add(str(resolved))
+            out.append({"path": str(link), "event": str(resolved),
+                        "name": link.name.replace("usb-", "").replace("-event-joystick", "")})
+    return out
+
+
+# --------------------------------------------------------------------------- targets
+
+def list_targets() -> list[dict]:
+    out = []
+    if not TARGET_DIR.is_dir():
+        return out
+    for path in sorted(TARGET_DIR.glob("*.json")):
+        try:
+            out.append(json.loads(path.read_text()))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return out
+
+
+def get_target(target_id: str) -> dict | None:
+    for t in list_targets():
+        if t.get("id") == target_id:
+            return t
+    return None
+
+
+# --------------------------------------------------------------------------- wizard
+
+def read_baseline(device: str) -> dict:
+    """The pad's resting position, sampled once while it is untouched.
+
+    Every capture is a separate process, so without this each one re-samples and a control
+    still being HELD is taken for its own neutral. The pad then looks settled, and releasing
+    it reads as a fresh deflection that satisfies the next prompt -- which is how moving one
+    stick could answer two steps.
+    """
+    if not DISCOVER.is_file():
+        return {"ok": False, "error": "gpb-discover is not built"}
+    rc, out = run([str(DISCOVER), "baseline", device], timeout=15)
+    for line in out.splitlines():
+        if line.strip().startswith("{"):
+            try:
+                return json.loads(line.strip())
+            except json.JSONDecodeError:
+                break
+    return {"ok": False, "error": out.strip() or f"baseline failed (rc={rc})"}
+
+
+def capture_once(device: str, kind: str, timeout_ms: int, exclude: list[str],
+                 neutral: dict | None = None) -> dict:
+    """Ask gpb-discover for one control.
+
+    Capture runs in the C++ tool rather than being reimplemented here, so the web wizard and
+    the terminal wizard share one implementation of the parts that were hard to get right:
+    resting baselines, the observed-axis rule, and rejecting an absinfo value that falls
+    outside the axis's own range.
+    """
+    if not DISCOVER.is_file():
+        return {"ok": False, "error": "gpb-discover is not built"}
+    cmd = [str(DISCOVER), "capture", device, "--kind", kind, "--timeout-ms", str(timeout_ms)]
+    if exclude:
+        cmd += ["--exclude", ",".join(exclude)]
+    if neutral:
+        cmd += ["--neutral", ",".join(f"{k}={int(v)}" for k, v in neutral.items()
+                                     if isinstance(v, (int, float)))]
+    rc, out = run(cmd, timeout=max(6, timeout_ms // 1000 + 8))
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                break
+    return {"ok": False, "error": out.strip() or f"capture failed (rc={rc})"}
+
+
+# Leading dot is the one thing genuinely worth refusing -- it hides the file and is the
+# shape traversal attempts take. Underscore is an ordinary filename character.
+SAFE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,60}$")
+
+
+def render_config(name: str, description: str, device: str, target: dict,
+                  mappings: list[dict]) -> str:
+    """Turn captured mappings into an ini.
+
+    Deliberately writes the same shape a human would: the [meta] block the panel displays,
+    then bindings grouped by kind. Nothing here is machine-only, so the file stays editable
+    over SSH afterwards.
+    """
+    # EvdevSource silently drops an axis binding whose target it does not recognise, so an
+    # invalid one is invisible until the control mysteriously does nothing. Refuse to write
+    # it in the first place.
+    VALID_AXES = {"lx", "ly", "rx", "ry", "lt", "rt", "hatx", "haty"}
+    axis_lines, button_lines = [], []
+    for m in mappings:
+        code, target_name = m.get("code", ""), m.get("target", "")
+        if not code or not target_name:
+            continue
+        if m.get("kind") == "axis" and target_name not in VALID_AXES:
+            continue
+        if m.get("kind") == "axis":
+            sign = "-" if m.get("invert") else ""
+            axis_lines.append(f"axis.{code} = {sign}{target_name}")
+        else:
+            button_lines.append(f"button.{code} = {target_name}")
+
+    # A hat answering a d-pad prompt binds the whole axis, so the same line can arrive up to
+    # twice. Keep the first and drop repeats rather than emitting a contradictory file.
+    def dedupe(lines):
+        seen, out = set(), []
+        for line in lines:
+            key = line.split("=", 1)[0].strip()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(line)
+        return out
+
+    body = [
+        "# Generated by the gpb-web mapping wizard.",
+        f"# Target: {target.get('name', target.get('id'))}",
+        "",
+        "[meta]",
+        f"name = {name}",
+        f"description = {description}",
+        "",
+        "[bridge]",
+        "source = evdev",
+        f"sink = {target.get('sink', 'ns_hid')}",
+        "rumble = false",
+        "",
+        "[source.evdev]",
+        f"device = {device}",
+        "grab   = true",
+        "",
+    ]
+    body += dedupe(axis_lines) + [""] + dedupe(button_lines)
+    body += [
+        "",
+        f"[sink.{target.get('sink', 'ns_hid')}]",
+        "device = /dev/hidg0",
+        "face_by_position = true",
+        "",
+        "# Consoles expect state every polling interval, not only on change. At 0, buttons",
+        "# are mostly missed while sticks appear to work.",
+        "heartbeat_hz = 125",
+        "",
+        "[profile]",
+        "trigger_deadzone = 12",
+        "",
+        "[profile.left]",
+        "deadzone   = 2000",
+        "saturation = 32000",
+        "expo       = 1.0",
+        "",
+        "[profile.right]",
+        "deadzone   = 2000",
+        "saturation = 32000",
+        "expo       = 1.0",
+        "",
+    ]
+    return "\n".join(body)
+
+
+def save_config(filename: str, content: str) -> tuple[bool, str]:
+    if not SAFE_NAME.match(filename):
+        return False, "name must be letters, digits, dot, dash or underscore"
+    if not filename.endswith(".ini"):
+        filename += ".ini"
+    path = CONFIG_DIR / filename
+    # Resolve and re-check: a name that escapes the config directory must not be written,
+    # and silently overwriting a config that may be driving a live console is worse still.
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(CONFIG_DIR.resolve())
+    except (OSError, ValueError):
+        return False, "refusing to write outside config/"
+    if resolved.exists():
+        return False, f"{filename} already exists -- choose another name"
+    try:
+        resolved.write_text(content)
+    except OSError as e:
+        return False, f"cannot write {filename}: {e}"
+    return True, str(resolved)
+
+
+def delete_config(path_str: str) -> tuple[bool, str]:
+    known = {str(p.resolve()) for p in list_configs()}
+    try:
+        resolved = str(Path(path_str).resolve())
+    except OSError:
+        return False, "bad path"
+    if resolved not in known:
+        return False, "not one of the known config files"
+    if resolved == str(Path(read_env()["GPB_CONFIG"]).resolve()):
+        return False, "that config is currently selected -- switch to another one first"
+    try:
+        os.remove(resolved)
+    except OSError as e:
+        return False, f"cannot delete: {e}"
+    return True, "deleted"
 
 
 # --------------------------------------------------------------------------- auth
@@ -273,6 +562,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(self.status())
         if path == "/api/logs":
             return self._json({"lines": self.logs()})
+        if path == "/api/devices":
+            return self._json({"devices": list_input_devices()})
+        if path == "/api/targets":
+            return self._json({"targets": list_targets()})
+        if path == "/wizard.js":
+            return self._static("wizard.js", "application/javascript")
+        if path == "/mapping.js":
+            return self._static("mapping.js", "application/javascript")
         self._send(HTTPStatus.NOT_FOUND, b'{"error":"not found"}')
 
     def do_POST(self):
@@ -297,6 +594,57 @@ class Handler(BaseHTTPRequestHandler):
             rc, out = systemctl("restart", GADGET_UNIT)
             return self._json({"ok": rc == 0, "message": out.strip() or "gadget re-enumerated"})
 
+        if path == "/api/wizard/begin":
+            # The bridge grabs the controller exclusively, so it has to let go before the
+            # wizard can read the same device. Stopping it briefly drops input to the
+            # console; the page warns about that before getting here.
+            rc, out = systemctl("stop", BRIDGE_UNIT)
+            return self._json({"ok": rc == 0, "message": out.strip() or "bridge stopped"})
+
+        if path == "/api/wizard/baseline":
+            device = payload.get("device", "")
+            known = {d["path"] for d in list_input_devices()} | {d["event"] for d in list_input_devices()}
+            if device not in known:
+                return self._json({"ok": False, "error": "unknown device"})
+            return self._json(read_baseline(device))
+
+        if path == "/api/wizard/capture":
+            device = payload.get("device", "")
+            if device not in {d["path"] for d in list_input_devices()} and \
+               device not in {d["event"] for d in list_input_devices()}:
+                return self._json({"ok": False, "error": "unknown device"})
+            neutral = payload.get("neutral")
+            result = capture_once(device,
+                                  payload.get("kind", "any"),
+                                  int(payload.get("timeout_ms", 8000)),
+                                  [c for c in payload.get("exclude", []) if isinstance(c, str)],
+                                  neutral if isinstance(neutral, dict) else None)
+            return self._json(result)
+
+        if path == "/api/wizard/finish":
+            # Always restart, whether the wizard was saved or abandoned: leaving the bridge
+            # stopped because someone closed a tab would be a confusing way to lose input.
+            rc, out = systemctl("start", BRIDGE_UNIT)
+            return self._json({"ok": rc == 0, "message": out.strip() or "bridge restarted"})
+
+        if path == "/api/wizard/save":
+            target = get_target(payload.get("target", ""))
+            if not target:
+                return self._json({"ok": False, "message": "unknown target"})
+            device = payload.get("device", "")
+            name = (payload.get("name") or "").strip() or "Untitled mapping"
+            description = (payload.get("description") or "").strip()
+            mappings = payload.get("mappings") or []
+            if not mappings:
+                return self._json({"ok": False, "message": "nothing was captured"})
+            content = render_config(name, description, device, target, mappings)
+            ok, msg = save_config(payload.get("filename", ""), content)
+            return self._json({"ok": ok, "message": msg if not ok else f"wrote {msg}"})
+
+        if path == "/api/config/delete":
+            ok, msg = delete_config(payload.get("config", ""))
+            return self._json({"ok": ok, "message": msg})
+
         if path == "/api/select":
             ok, msg = write_env(payload.get("config", ""), payload.get("source", ""))
             if ok and payload.get("restart", True):
@@ -319,10 +667,13 @@ class Handler(BaseHTTPRequestHandler):
         configs = []
         for p in list_configs():
             configs.append({"path": str(p), "name": p.name, **config_summary(p)})
+        bridge, udc, bstat = unit_state(BRIDGE_UNIT), udc_state(), bridge_status()
         return {
-            "bridge": unit_state(BRIDGE_UNIT),
+            "bridge": bridge,
             "gadget": unit_state(GADGET_UNIT),
-            "udc": udc_state(),
+            "udc": udc,
+            "link": assess(bridge, udc, bstat),
+            "stats": bstat,
             "active": {"config": env["GPB_CONFIG"], "source": env["GPB_SOURCE"]},
             "configs": configs,
         }

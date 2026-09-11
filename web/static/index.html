@@ -20,6 +20,16 @@
 </header>
 
 <main>
+  <!-- The one thing worth saying loudly: whether input is actually reaching the console.
+       Previously the page reported a healthy link while nothing was getting through. -->
+  <section id="link-banner" class="banner" hidden>
+    <div>
+      <p class="banner-head" id="link-head">&nbsp;</p>
+      <p class="banner-detail" id="link-detail">&nbsp;</p>
+    </div>
+    <button id="link-fix" class="btn" hidden>Re-enumerate gadget</button>
+  </section>
+
   <section class="cards">
     <article class="card" id="card-bridge">
       <h2>Bridge</h2>
@@ -74,6 +84,18 @@
   <section class="panel">
     <div class="panel-head row">
       <div>
+        <h2>Mapping wizard</h2>
+        <p class="hint">Map your controller onto the device this bridge pretends to be.</p>
+      </div>
+      <button id="wizard-open" class="btn btn-primary">Start wizard</button>
+    </div>
+    <p class="hint">Writes a new config; it never overwrites an existing one. The bridge is
+      stopped while the wizard runs, because it holds the controller exclusively.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head row">
+      <div>
         <h2>Logs</h2>
         <p class="hint">journalctl &mdash; gpbridge.service</p>
       </div>
@@ -83,7 +105,74 @@
   </section>
 </main>
 
+<div id="wizard" class="overlay" hidden>
+  <div class="sheet">
+    <header class="sheet-head">
+      <div>
+        <h2 id="wiz-title">Mapping wizard</h2>
+        <p class="hint" id="wiz-sub">&nbsp;</p>
+      </div>
+      <button id="wiz-close" class="btn btn-quiet">Close</button>
+    </header>
+
+    <div class="sheet-body">
+      <!-- step 1: choose -->
+      <div id="wiz-setup" class="wiz-step">
+        <div class="field">
+          <label>Your controller</label>
+          <div id="wiz-devices" class="options"></div>
+        </div>
+        <div class="field">
+          <label>Device to emulate</label>
+          <div id="wiz-targets" class="options"></div>
+        </div>
+        <p class="warn-box">Starting the wizard stops the bridge, so the console receives no
+          input until it finishes. The bridge is restarted automatically either way.</p>
+        <button id="wiz-begin" class="btn btn-primary">Begin</button>
+      </div>
+
+      <!-- step 2: capture -->
+      <div id="wiz-capture" class="wiz-step" hidden>
+        <div class="diagram-wrap"><svg id="wiz-svg" role="img" aria-label="target controller"></svg></div>
+        <p class="prompt" id="wiz-prompt">&nbsp;</p>
+        <p class="hint" id="wiz-progress">&nbsp;</p>
+        <p class="wiz-note" id="wiz-note" role="status" hidden></p>
+        <div class="actions">
+          <button id="wiz-skip" class="btn btn-quiet">Skip this one</button>
+          <button id="wiz-abort" class="btn btn-quiet">Cancel</button>
+        </div>
+      </div>
+
+      <!-- step 3: save -->
+      <div id="wiz-save" class="wiz-step" hidden>
+        <div class="field">
+          <label>Name</label>
+          <input id="wiz-name" class="input" placeholder="Stadia Controller to Nintendo Switch">
+        </div>
+        <div class="field">
+          <label>Description</label>
+          <input id="wiz-desc" class="input" placeholder="What this mapping is for">
+        </div>
+        <div class="field">
+          <label>File name</label>
+          <input id="wiz-file" class="input" placeholder="my_mapping.ini">
+        </div>
+        <div class="field">
+          <label>Captured</label>
+          <pre id="wiz-summary" class="logs"></pre>
+        </div>
+        <div class="actions">
+          <button id="wiz-write" class="btn btn-primary">Save config</button>
+          <button id="wiz-abort2" class="btn btn-quiet">Discard</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/mapping.js"></script>
 <script src="/app.js"></script>
+<script src="/wizard.js"></script>
 </body>
 </html>

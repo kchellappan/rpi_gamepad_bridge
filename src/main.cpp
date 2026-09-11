@@ -19,13 +19,14 @@ void usage(const char* argv0) {
                "usage: %s --config <file> [--source NAME] [--sink NAME] [--record FILE]\n"
                "\n"
                "  --source/--sink override the config's selection, so one config can be\n"
-               "  reused for live play and for socket-driven replay.\n",
+               "  reused for live play and for socket-driven replay.\n"
+               "  --status writes a small health file the control panel reads.\n",
                argv0);
 }
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string config_path, source_override, sink_override, record_override;
+  std::string config_path, source_override, sink_override, record_override, status_override;
 
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -40,6 +41,7 @@ int main(int argc, char** argv) {
     else if (a == "--source") source_override = next("--source");
     else if (a == "--sink") sink_override = next("--sink");
     else if (a == "--record") record_override = next("--record");
+    else if (a == "--status") status_override = next("--status");
     else if (a == "-h" || a == "--help") { usage(argv[0]); return 0; }
     else { std::fprintf(stderr, "unknown argument: %s\n", a.c_str()); usage(argv[0]); return 2; }
   }
@@ -99,6 +101,7 @@ int main(int argc, char** argv) {
   opts.record_path = record_override.empty() ? cfg.get("bridge.record_path") : record_override;
   opts.record = !opts.record_path.empty();
   opts.record_ring_slots = static_cast<size_t>(cfg.get_int("bridge.record_ring_slots", 8192));
+  opts.status_path = status_override.empty() ? cfg.get("bridge.status_path") : status_override;
   opts.rt_priority = cfg.get_int("bridge.rt_priority", 0);
   opts.cpu_affinity = cfg.get_int("bridge.cpu_affinity", -1);
 

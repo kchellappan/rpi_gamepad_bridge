@@ -35,6 +35,17 @@ function stateClass(active) {
 }
 
 function renderStatus(s) {
+  // Link health first. This is the claim a user actually cares about, and the one the page
+  // used to get wrong: a USB link can report itself connected while the endpoint is dead
+  // and every report fails, which looked identical to working.
+  const link = s.link || { level: 'unknown', headline: '', detail: '' };
+  const banner = $('link-banner');
+  banner.className = 'banner ' + link.level;
+  banner.hidden = link.level === 'ok';
+  $('link-head').textContent = link.headline || '';
+  $('link-detail').textContent = link.detail || '';
+  $('link-fix').hidden = link.level !== 'bad';
+
   // Bridge
   $('bridge-state').textContent = s.bridge.active;
   $('bridge-state').className = 'state ' + stateClass(s.bridge.active);
@@ -52,10 +63,14 @@ function renderStatus(s) {
     $('usb-state').className = 'state bad';
     $('usb-meta').textContent = 'peripheral mode is not enabled';
   } else {
+    // "connected" now means reports are landing, not merely that the link enumerated.
     const attached = u.state === 'configured';
-    $('usb-state').textContent = attached ? 'connected' : u.state;
-    $('usb-state').className = 'state ' + (attached ? 'ok' : 'warn');
-    $('usb-meta').textContent = `${u.name}  ·  ${u.speed}`;
+    const flowing = (s.link || {}).level === 'ok';
+    $('usb-state').textContent = !attached ? u.state : (flowing ? 'sending' : 'not sending');
+    $('usb-state').className = 'state ' + (flowing ? 'ok' : attached ? 'bad' : 'warn');
+    const st = s.stats || {};
+    $('usb-meta').textContent = [u.name, u.speed,
+      st.submits !== undefined ? `${st.submits} reports` : null].filter(Boolean).join('  ·  ');
   }
 
   // Mode
@@ -95,6 +110,27 @@ function renderStatus(s) {
         pending.config = c.path;
         markSelection(s.active.config);
       });
+      // Deleting is offered per row, but the server refuses to remove the config that is
+      // currently selected -- losing the file driving a live console should take a
+      // deliberate switch first, not one stray click.
+      const del = document.createElement('button');
+      del.className = 'btn btn-quiet btn-danger';
+      del.textContent = 'Delete';
+      del.style.marginLeft = 'auto';
+      del.addEventListener('click', async (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        if (!confirm(`Delete ${c.name}?\n\nThis cannot be undone.`)) return;
+        try {
+          const r = await api('/api/config/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: c.path }),
+          });
+          toast(r.message, !r.ok);
+          if (r.ok) { lastConfigSignature = ''; refresh(); }
+        } catch (err) { toast(String(err), true); }
+      });
+      el.appendChild(del);
       list.appendChild(el);
     }
   }
@@ -104,12 +140,20 @@ function renderStatus(s) {
 
 function markSelection(activePath) {
   const chosen = pending.config ?? activePath;
-  document.querySelectorAll('.option').forEach((el) => {
+  // Scoped to the config list on purpose. Reaching across the whole document for `.option`
+  // also caught the wizard's device and target rows -- so the two-second status poll quietly
+  // unchecked whatever the user had just selected in the modal, then threw on their missing
+  // `.badge` and abandoned the rest of the render. The intermittency was the poll interval.
+  const list = $('config-list');
+  if (!list) return;
+  list.querySelectorAll('.option').forEach((el) => {
     const input = el.querySelector('input');
+    if (!input) return;
     const isChosen = input.value === chosen;
     input.checked = isChosen;
     el.setAttribute('aria-checked', String(isChosen));
-    el.querySelector('.badge').hidden = input.value !== activePath;
+    const badge = el.querySelector('.badge');
+    if (badge) badge.hidden = input.value !== activePath;
   });
 }
 
@@ -198,6 +242,7 @@ function wire() {
     refresh(); refreshLogs();
   });
 
+  $('link-fix').addEventListener('click', () => $('gadget-restart').click());
   $('hostline').textContent = location.host;
 }
 

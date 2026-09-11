@@ -23,6 +23,14 @@ struct BridgeOptions {
   size_t record_ring_slots = 8192;
   int rt_priority = 0;          // 0 disables SCHED_FIFO
   int cpu_affinity = -1;        // -1 disables pinning
+
+  // Where to publish health for the control panel. Empty disables it.
+  //
+  // The bridge is the only component that knows whether its writes actually reach the host.
+  // /sys/class/udc reports what the link claims, and it can claim "configured" while the
+  // interrupt endpoint is disabled and every write fails -- which is exactly the state that
+  // looked healthy in the UI while nothing worked at all.
+  std::string status_path;
 };
 
 class Bridge {
@@ -43,11 +51,14 @@ class Bridge {
     uint64_t feedback = 0;
     uint64_t disconnects = 0;
     uint64_t reconnects = 0;
+    uint64_t last_write_ok_ns = 0;   // CLOCK_MONOTONIC of the last report that reached the wire
+    uint64_t write_failures = 0;     // consecutive failures; reset by any success
   };
   const Stats& stats() const { return stats_; }
 
  private:
   bool submit_current();
+  void publish_status(bool force);
 
   std::unique_ptr<InputSource> src_;
   std::unique_ptr<OutputSink> sink_;
@@ -61,6 +72,8 @@ class Bridge {
   volatile bool running_ = false;
   int epfd_ = -1;
   int timerfd_ = -1;
+  uint64_t started_ns_ = 0;
+  uint64_t status_written_ns_ = 0;
 };
 
 }  // namespace gpb

@@ -232,11 +232,31 @@ bool wait_for_rest(int fd, const std::map<uint16_t, AbsInfo>& neutral,
   return false;
 }
 
-// `exclude` holds codes already bound to an earlier target. Without it, the residual
-// motion of a stick that has just answered one prompt happily answers the next.
-bool capture_axis(int fd, const std::map<uint16_t, AbsInfo>& neutral,
-                  const std::set<uint16_t>& exclude, std::set<uint16_t>& observed,
-                  std::string& code_name, bool& invert, int timeout_ms) {
+// One capture implementation, used by both the terminal wizard and the JSON capture the
+// web wizard drives. A second copy would drift from this one, and everything subtle lives
+// here: resting baselines, the observed-axis rule, and excluding codes already bound.
+//
+// `accept_button` and `accept_axis` select what counts. A control like ZL may legitimately
+// be satisfied by either -- a digital shoulder button or an analog trigger -- so the caller
+// can accept both and record whichever actually arrived.
+struct Capture {
+  bool ok = false;
+  bool is_axis = false;
+  std::string code;
+  bool invert = false;
+  // A control the user pressed that is already bound to an earlier target. Without
+  // reporting this, such a press looks identical to pressing nothing: the step just times
+  // out. On a pad with few spare buttons -- a DualSense has no separate Create button, it
+  // reports BTN_SELECT -- that is the difference between a confusing dead end and an
+  // explanation.
+  std::string blocked_by;
+};
+
+Capture capture_control(int fd, const std::map<uint16_t, AbsInfo>& neutral,
+                        std::set<uint16_t>& observed, const std::set<uint16_t>& exclude_axes,
+                        const std::set<uint16_t>& exclude_keys, bool accept_button,
+                        bool accept_axis, int timeout_ms) {
+  Capture out;
   std::map<uint16_t, int32_t> extreme;
   for (const auto& [code, a] : neutral) extreme[code] = a.neutral;
 
@@ -250,56 +270,67 @@ bool capture_axis(int fd, const std::map<uint16_t, AbsInfo>& neutral,
       continue;
     }
     while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
-      if (e.type != EV_ABS) continue;
+      if (accept_button && e.type == EV_KEY && e.value == 1 && exclude_keys.count(e.code))
+        out.blocked_by = gpb::evdev_key_name(e.code);
+      if (accept_button && e.type == EV_KEY && e.value == 1 && !exclude_keys.count(e.code)) {
+        out.ok = true;
+        out.is_axis = false;
+        out.code = gpb::evdev_key_name(e.code);
+        return out;
+      }
+      // A hat is reported as an axis but behaves like a button, so it satisfies either.
+      if (e.type == EV_ABS && (e.code == ABS_HAT0X || e.code == ABS_HAT0Y) && e.value != 0) {
+        if (!accept_button && !accept_axis) continue;
+        out.ok = true;
+        out.is_axis = true;
+        out.code = gpb::evdev_abs_name(e.code);
+        out.invert = e.value < 0;
+        return out;
+      }
+      if (!accept_axis || e.type != EV_ABS) continue;
+
       auto it = neutral.find(e.code);
       if (it == neutral.end()) continue;
       observed.insert(e.code);   // it reports; from now on we can hold it to its neutral
-      if (exclude.count(e.code)) continue;
+      if (exclude_axes.count(e.code)) {
+        const int32_t d = e.value - it->second.neutral;
+        if (std::abs(d) > it->second.span / 3) out.blocked_by = gpb::evdev_abs_name(e.code);
+        continue;
+      }
 
       const int32_t base = it->second.neutral;
       if (std::abs(e.value - base) > std::abs(extreme[e.code] - base)) extreme[e.code] = e.value;
-
-      // A third of full span is well past resting jitter but reachable without pushing
-      // the stick perfectly on-axis.
       const int32_t delta = extreme[e.code] - base;
       if (std::abs(delta) > it->second.span / 3) {
-        code_name = gpb::evdev_abs_name(e.code);
-        invert = delta < 0;
-        return true;
+        out.ok = true;
+        out.is_axis = true;
+        out.code = gpb::evdev_abs_name(e.code);
+        out.invert = delta < 0;
+        return out;
       }
     }
   }
-  return false;
+  return out;
+}
+
+bool capture_axis(int fd, const std::map<uint16_t, AbsInfo>& neutral,
+                  const std::set<uint16_t>& exclude, std::set<uint16_t>& observed,
+                  std::string& code_name, bool& invert, int timeout_ms) {
+  Capture c = capture_control(fd, neutral, observed, exclude, {}, false, true, timeout_ms);
+  code_name = c.code;
+  invert = c.invert;
+  return c.ok;
 }
 
 bool capture_button(int fd, const std::set<uint16_t>& exclude_keys, std::string& code_name,
                     bool& is_axis, bool& axis_invert, int timeout_ms) {
-  input_event e;
-  int waited = 0;
-  const int kSlice = 100;
-
-  while (waited < timeout_ms) {
-    if (!wait_readable(fd, kSlice)) {
-      waited += kSlice;
-      continue;
-    }
-    while (::read(fd, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
-      if (e.type == EV_KEY && e.value == 1 && !exclude_keys.count(e.code)) {
-        code_name = gpb::evdev_key_name(e.code);
-        is_axis = false;
-        return true;
-      }
-      // Many pads report the d-pad as a hat axis rather than four buttons. Hat codes are
-      // deliberately NOT excluded after use: up and down legitimately share ABS_HAT0Y.
-      if (e.type == EV_ABS && (e.code == ABS_HAT0X || e.code == ABS_HAT0Y) && e.value != 0) {
-        code_name = gpb::evdev_abs_name(e.code);
-        is_axis = true;
-        axis_invert = e.value < 0;
-        return true;
-      }
-    }
-  }
-  return false;
+  static const std::map<uint16_t, AbsInfo> kNoAxes;
+  std::set<uint16_t> ignored;
+  Capture c = capture_control(fd, kNoAxes, ignored, {}, exclude_keys, true, false, timeout_ms);
+  code_name = c.code;
+  is_axis = c.is_axis;
+  axis_invert = c.invert;
+  return c.ok;
 }
 
 int cmd_wizard(const char* path) {
@@ -419,19 +450,157 @@ int cmd_wizard(const char* path) {
   return 0;
 }
 
+// ---------------------------------------------------------------- baseline / capture (JSON)
+
+// Sample the pad's resting position once, for the web wizard to hold and hand back to every
+// subsequent capture.
+//
+// This exists because each web capture is a separate process. Re-sampling per step means a
+// control still being HELD is recorded as its own neutral -- the pad then looks settled, and
+// releasing it reads as a fresh deflection that satisfies the following prompt. The terminal
+// wizard never had this problem because it samples once and keeps the value.
+int cmd_baseline(const char* path) {
+  int fd = open(path, O_RDONLY | O_NONBLOCK);
+  if (fd < 0) {
+    std::printf("{\"ok\":false,\"error\":\"cannot open device\"}\n");
+    return 1;
+  }
+  const auto neutral = sample_neutral(fd);
+  close(fd);
+
+  std::printf("{\"ok\":true,\"axes\":{");
+  bool first = true;
+  for (const auto& [code, a] : neutral) {
+    if (!first) std::printf(",");
+    first = false;
+    std::printf("\"%s\":%d", gpb::evdev_abs_name(code).c_str(), a.neutral);
+  }
+  std::printf("}}\n");
+  return 0;
+}
+
+// ---------------------------------------------------------------- capture (machine readable)
+
+// Emits one JSON object describing a single captured control. Used by the web wizard, which
+// drives the capture step by step from the browser and needs a parseable answer rather than
+// a human-readable prompt.
+int cmd_capture(const char* path, const std::string& kind, int timeout_ms,
+                const std::string& exclude_csv, const std::string& neutral_csv) {
+  const bool accept_button = (kind == "button" || kind == "any");
+  const bool accept_axis = (kind == "axis" || kind == "any");
+  if (!accept_button && !accept_axis) {
+    std::printf("{\"ok\":false,\"error\":\"kind must be button, axis or any\"}\n");
+    return 2;
+  }
+
+  int fd = open(path, O_RDONLY | O_NONBLOCK);
+  if (fd < 0) {
+    std::printf("{\"ok\":false,\"error\":\"cannot open device\"}\n");
+    return 1;
+  }
+
+  std::set<uint16_t> exclude_axes, exclude_keys;
+  {
+    std::string item;
+    std::string csv = exclude_csv;
+    size_t pos;
+    while (!csv.empty()) {
+      pos = csv.find(',');
+      item = csv.substr(0, pos);
+      if (!item.empty()) {
+        bool ok = false;
+        const uint16_t code = gpb::evdev_code_from_name(item, ok);
+        if (ok) {
+          // ABS_* names resolve into the axis set, everything else into the key set.
+          if (item.rfind("ABS_", 0) == 0) exclude_axes.insert(code);
+          else exclude_keys.insert(code);
+        }
+      }
+      if (pos == std::string::npos) break;
+      csv = csv.substr(pos + 1);
+    }
+  }
+
+  auto neutral = sample_neutral(fd);
+
+  // Override with the baseline captured while the pad was untouched, when the caller has
+  // one. Without it a control still being held is taken for its own resting position.
+  if (!neutral_csv.empty()) {
+    std::string csv = neutral_csv;
+    while (!csv.empty()) {
+      const size_t comma = csv.find(',');
+      const std::string item = csv.substr(0, comma);
+      const size_t eq = item.find('=');
+      if (eq != std::string::npos) {
+        bool ok = false;
+        const uint16_t code = gpb::evdev_code_from_name(item.substr(0, eq), ok);
+        auto it = neutral.find(code);
+        if (ok && it != neutral.end()) {
+          it->second.neutral = std::atoi(item.substr(eq + 1).c_str());
+          it->second.confirmed = true;
+        }
+      }
+      if (comma == std::string::npos) break;
+      csv = csv.substr(comma + 1);
+    }
+  }
+
+  std::set<uint16_t> observed;
+  for (const auto& [code, a] : neutral)
+    if (a.confirmed) observed.insert(code);
+
+  // Settle first, so a control still held from the previous step cannot answer this one.
+  std::string blocker;
+  wait_for_rest(fd, neutral, observed, 4000, blocker);
+  drain(fd);
+
+  Capture c = capture_control(fd, neutral, observed, exclude_axes, exclude_keys,
+                              accept_button, accept_axis, timeout_ms);
+  close(fd);
+
+  if (!c.ok) {
+    if (!c.blocked_by.empty()) {
+      std::printf("{\"ok\":false,\"error\":\"already_bound\",\"code\":\"%s\"}\n",
+                  c.blocked_by.c_str());
+    } else {
+      std::printf("{\"ok\":false,\"error\":\"timeout\"}\n");
+    }
+    return 0;   // a timeout is a normal outcome the caller handles, not a failure to run
+  }
+  std::printf("{\"ok\":true,\"kind\":\"%s\",\"code\":\"%s\",\"invert\":%s}\n",
+              c.is_axis ? "axis" : "button", c.code.c_str(), c.invert ? "true" : "false");
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr,
-                 "usage:\n  %s list\n  %s caps <device>\n  %s wizard <device>\n",
-                 argv[0], argv[0], argv[0]);
+                 "usage:\n  %s list\n  %s caps <device>\n  %s wizard <device>\n"
+                 "  %s baseline <device>\n"
+                 "  %s capture <device> [--kind button|axis|any] [--timeout-ms N] "
+                 "[--exclude CODE,CODE] [--neutral CODE=N,CODE=N]\n",
+                 argv[0], argv[0], argv[0], argv[0], argv[0]);
     return 2;
   }
   const std::string cmd = argv[1];
   if (cmd == "list") return cmd_list();
   if (cmd == "caps" && argc >= 3) return cmd_caps(argv[2]);
   if (cmd == "wizard" && argc >= 3) return cmd_wizard(argv[2]);
+  if (cmd == "baseline" && argc >= 3) return cmd_baseline(argv[2]);
+  if (cmd == "capture" && argc >= 3) {
+    std::string kind = "any", exclude, neutral;
+    int timeout_ms = 8000;
+    for (int i = 3; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--kind" && i + 1 < argc) kind = argv[++i];
+      else if (a == "--timeout-ms" && i + 1 < argc) timeout_ms = std::atoi(argv[++i]);
+      else if (a == "--exclude" && i + 1 < argc) exclude = argv[++i];
+      else if (a == "--neutral" && i + 1 < argc) neutral = argv[++i];
+    }
+    return cmd_capture(argv[2], kind, timeout_ms, exclude, neutral);
+  }
   std::fprintf(stderr, "unknown command\n");
   return 2;
 }

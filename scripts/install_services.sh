@@ -17,7 +17,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 UNIT_DIR=/etc/systemd/system
 CONF_DIR=/etc/gpbridge
-ENVFILE="$CONF_DIR/active.env"
+STATE_DIR=/var/lib/gpbridge
+ENVFILE="$STATE_DIR/active.env"
 
 if [[ "${1:-}" == "--uninstall" ]]; then
   [[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
@@ -35,7 +36,14 @@ CONFIG="${1:-$REPO/config/stadia_to_switch.ini}"
 
 # Which config and source the bridge starts with now lives in an env file rather than being
 # baked into ExecStart, so the web panel can change it without rewriting a unit.
-mkdir -p "$CONF_DIR"
+# Mutable state lives in /var/lib and is owned by the service account; /etc/gpbridge stays
+# root-owned for secrets. The service must be able to CREATE files in this directory, not
+# just write the env file: the update is done by writing a temp file alongside it and
+# renaming, which is what makes it atomic.
+mkdir -p "$CONF_DIR" "$STATE_DIR"
+chown "${SUDO_USER:-${USER:-pi}}" "$STATE_DIR"
+
+
 if [[ ! -f "$ENVFILE" ]]; then
   cat > "$ENVFILE" <<ENV
 # Written by gpb-web. The .ini files remain the source of truth;
@@ -50,6 +58,7 @@ fi
 
 for u in gpb-gadget gpbridge; do
   sed -e "s|@REPO@|$REPO|g" -e "s|@CONFIG@|$CONFIG|g" -e "s|@ENVFILE@|$ENVFILE|g" \
+      -e "s|@STATEDIR@|$STATE_DIR|g" \
       "$REPO/systemd/$u.service.in" > "$UNIT_DIR/$u.service"
   echo "wrote $UNIT_DIR/$u.service"
 done

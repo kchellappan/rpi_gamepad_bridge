@@ -162,6 +162,7 @@ grab = false
 axis.ABS_X = lx
 axis.ABS_Y = ly
 button.BTN_SOUTH = south
+button.BTN_TR2 = r2
 [sink.ns_hid]
 device = $TMP/hid3.bin
 face_by_position = true
@@ -169,6 +170,22 @@ heartbeat_hz = 0
 [profile.left]
 deadzone = 0
 EOF
+    # The resting baseline must be the pad's true neutral. The web wizard samples this once
+    # and hands it to every capture, because each capture is its own process: re-sampling
+    # per step means a control still being HELD is recorded as its own neutral, and
+    # releasing it then reads as a deflection that answers the following prompt.
+    BASE="$(sudo -n "$BUILD/gpb-discover" baseline "$NODE" 2>/dev/null)"
+    if python3 -c "
+import json, sys
+a = json.loads(sys.argv[1])['axes']
+assert a['ABS_X'] == 128, a
+assert a['ABS_GAS'] == 0, a
+" "$BASE" 2>/dev/null; then
+      ok "baseline reports the pad's resting position (sticks centred, triggers released)"
+    else
+      bad "baseline returned unexpected resting values" "$BASE"
+    fi
+
     sudo -n "$BRIDGE" --config "$TMP/ev.ini" > "$TMP/b3.log" 2>&1 &
     BPID=$!
     wait $PADPID 2>/dev/null
@@ -179,15 +196,119 @@ d=open('$TMP/hid3.bin','rb').read()
 print(' '.join(d[i:i+8].hex() for i in range(0,len(d)//8*8,8)))")"
     # Expect the stick to reach full right (lx=0xff) and the bottom face button to appear
     # as Switch B (bit 1 of byte 0) under face_by_position.
-    if grep -q "ff" <<<"$HEX" && grep -qE "02[0-9a-f]{2}" <<<"$HEX"; then
-      ok "evdev events reach the wire correctly"
+    # Expect: the stick reaching full right (lx=0xff), the bottom face button appearing as
+    # Switch B (bit 1 of byte 0), and a DIGITALLY bound trigger surviving as ZR (bit 7).
+    STICK=0; FACE=0; ZR=0
+    for r in $HEX; do
+      B0=$((16#${r:0:2}))
+      [[ "${r:6:2}" == "ff" ]] && STICK=1
+      (( B0 & 0x02 )) && FACE=1
+      (( B0 & 0x80 )) && ZR=1
+    done
+    if [[ $STICK -eq 1 && $FACE -eq 1 && $ZR -eq 1 ]]; then
+      ok "evdev events reach the wire, including a digitally bound trigger as ZR"
     else
-      bad "evdev path produced unexpected reports" "reports: $HEX"
+      bad "evdev path produced unexpected reports" "stick=$STICK face=$FACE zr=$ZR
+        reports: $HEX"
     fi
   fi
 fi
 
-# ---------------------------------------------------------------- 6. no dependency creep
+# ---------------------------------------------------------------- 6. static web assets
+echo "web assets"
+JS_OK=1
+if command -v node >/dev/null 2>&1; then
+  for f in web/static/*.js; do
+    node --check "$f" 2>&1 | sed "s|^|        |" || JS_OK=0
+  done
+  [[ $JS_OK -eq 1 ]] && ok "javascript parses" || bad "javascript has a syntax error" "see above"
+
+  # Target resolution is the one part of the wizard that is logic rather than rendering, so
+  # it is worth unit testing. It has been wrong twice on real hardware.
+  if MAPOUT="$(node tests/test_mapping.js 2>&1)"; then
+    echo "$MAPOUT" | sed "s|^  |  |"
+    PASS=$((PASS + $(grep -c 'PASS' <<<"$MAPOUT")))
+  else
+    echo "$MAPOUT"
+    FAIL=$((FAIL + $(grep -c 'FAIL' <<<"$MAPOUT")))
+  fi
+else
+  echo "  SKIP  node not available to parse or unit-test the javascript"
+fi
+
+# The browser's own [hidden] rule is a UA style, so any class selector setting `display`
+# silently outranks it. That shipped once: .overlay{display:flex} made the wizard modal
+# impossible to hide, so it covered the page from first paint and blocked every click --
+# including its own Close button. The global override is what prevents a repeat.
+if grep -qE '^\[hidden\] \{ display: none !important; \}' web/static/style.css; then
+  ok "[hidden] is authoritative in css"
+else
+  bad "the global [hidden] override is missing from style.css" \
+      "without it any class setting display can make an element unhideable"
+fi
+
+# A document-wide query for a class that several components share will reach into all of
+# them. That happened: the status poll's `document.querySelectorAll('.option')` also matched
+# the wizard's device rows, unchecking the user's selection every two seconds and throwing on
+# their absent `.badge`. Component state belongs to a scoped query.
+if grep -nE "document\.querySelectorAll\('\.(option|ctl)'\)" web/static/*.js >/dev/null; then
+  bad "a document-wide query targets a class shared by several components" \
+      "$(grep -nE "document\.querySelectorAll\('\.(option|ctl)'\)" web/static/*.js)"
+else
+  ok "shared-class queries are scoped to their container"
+fi
+
+# The toast must stack above the modal overlay. It is the only channel the wizard has for
+# reporting an error, and the wizard runs inside that overlay -- underneath it, messages are
+# both hidden and blurred by the overlay's backdrop-filter.
+ZORDER="$(python3 - <<'PYZ'
+import re, pathlib
+css = pathlib.Path("web/static/style.css").read_text()
+def z(selector):
+    m = re.search(re.escape(selector) + r"\s*\{[^}]*?z-index:\s*(\d+)", css, re.S)
+    return int(m.group(1)) if m else None
+print(f"{z('.toast')} {z('.overlay')}")
+PYZ
+)"
+read -r TOAST_Z OVERLAY_Z <<<"$ZORDER"
+if [[ "$TOAST_Z" != "None" && "$OVERLAY_Z" != "None" && $TOAST_Z -gt $OVERLAY_Z ]]; then
+  ok "toast stacks above the modal overlay (${TOAST_Z} > ${OVERLAY_Z})"
+else
+  bad "toast would render behind the wizard modal" "toast z-index=$TOAST_Z overlay z-index=$OVERLAY_Z"
+fi
+
+# Every element id the scripts reach for must actually exist in the markup: a typo there
+# produces a null dereference that silently kills the rest of the script.
+MISSING="$(python3 - <<'PYCHK'
+import re, pathlib
+html = pathlib.Path("web/static/index.html").read_text()
+ids = set(re.findall(r'id="([^"]+)"', html))
+missing = []
+for js in sorted(pathlib.Path("web/static").glob("*.js")):
+    body = js.read_text()
+    for ref in sorted(set(re.findall(r"(?:\$|wq)\('([^']+)'\)", body))):
+        if ref not in ids:
+            missing.append(f"{js.name}:#{ref}")
+print(" ".join(missing))
+PYCHK
+)"
+if [[ -z "$MISSING" ]]; then
+  ok "every element id the scripts reach for exists in the markup"
+else
+  bad "scripts reference ids that are not in index.html" "$MISSING"
+fi
+
+# Link assessment: the decision that previously reported a healthy connection throughout a
+# total outage.
+if HEALTHOUT="$(python3 tests/test_health.py 2>&1)"; then
+  echo "$HEALTHOUT"
+  PASS=$((PASS + $(grep -c 'PASS' <<<"$HEALTHOUT")))
+else
+  echo "$HEALTHOUT"
+  FAIL=$((FAIL + $(grep -c 'FAIL' <<<"$HEALTHOUT")))
+fi
+
+# ---------------------------------------------------------------- 7. no dependency creep
 echo "python dependency check"
 if OUT="$(python3 tests/check_stdlib_only.py 2>&1)"; then
   echo "$OUT"; PASS=$((PASS+1))
@@ -259,6 +380,71 @@ else
   bad "selection validation is too permissive" "path: $REJECT
         source: $REJECT2"
 fi
+
+# The wizard writes config files and can delete them, so its guardrails matter more than
+# most: it runs on a device plugged into a console, reachable over the network.
+TGT="$(curl -s -u admin:testsecret "$BASE/api/targets")"
+if python3 -c "
+import json,sys
+t=json.loads(sys.argv[1])['targets']
+assert t, 'no targets'
+first=t[0]
+assert first.get('controls'), 'target has no controls'
+assert first.get('body'), 'target has no diagram path'
+assert all(c.get('label') for c in first['controls']), 'every control needs a label'
+" "$TGT" 2>/dev/null; then
+  ok "targets endpoint serves a usable device descriptor"
+else
+  bad "target descriptor malformed" "$(head -c 200 <<<"$TGT")"
+fi
+
+post() { curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' -d "$2" "$BASE$1"; }
+MAP='[{"kind":"button","code":"BTN_SOUTH","target":"south"}]'
+
+CLOBBER="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"stadia_to_switch.ini\",\"name\":\"x\",\"mappings\":$MAP}")"
+ESCAPE="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"../../evil.ini\",\"name\":\"x\",\"mappings\":$MAP}")"
+EMPTY="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"fresh.ini\",\"name\":\"x\",\"mappings\":[]}")"
+if grep -q '"ok": false' <<<"$CLOBBER" && grep -q '"ok": false' <<<"$ESCAPE" \
+   && grep -q '"ok": false' <<<"$EMPTY"; then
+  ok "wizard refuses to overwrite, escape config/, or save nothing"
+else
+  bad "wizard save guardrails too permissive" "clobber: $CLOBBER
+        escape:  $ESCAPE
+        empty:   $EMPTY"
+fi
+
+DELACTIVE="$(post /api/config/delete "{\"config\":\"$PWD/config/stadia_to_switch.ini\"}")"
+DELUNKNOWN="$(post /api/config/delete '{"config":"/etc/passwd"}')"
+if grep -q '"ok": false' <<<"$DELACTIVE" && grep -q '"ok": false' <<<"$DELUNKNOWN"; then
+  ok "delete refuses the active config and unknown paths"
+else
+  bad "delete guardrails too permissive" "active: $DELACTIVE
+        unknown: $DELUNKNOWN"
+fi
+
+# A real save must still work, or the guardrails above would pass trivially.
+GOOD="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"__wizard_test.ini\",\"name\":\"Test\",\"description\":\"generated by the suite\",\"mappings\":$MAP}")"
+if grep -q '"ok": true' <<<"$GOOD" && [[ -f config/__wizard_test.ini ]] \
+   && grep -q '^button.BTN_SOUTH = south' config/__wizard_test.ini \
+   && grep -q '^heartbeat_hz = 125' config/__wizard_test.ini; then
+  ok "wizard writes a valid config with the heartbeat defaulted on"
+else
+  bad "generated config was wrong" "$GOOD
+        $(head -20 config/__wizard_test.ini 2>/dev/null)"
+fi
+rm -f config/__wizard_test.ini
+
+# A digital ZL/ZR must survive the profile transform. It previously did not: the analog
+# shadow assigned the bit rather than OR-ing it, so a pad mapped with BTN_TL2/BTN_TR2 (no
+# analog value, lt stays 0) had every press erased immediately. The config looked right and
+# the control did nothing.
+BAD_AXIS="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"__bad_axis.ini\",\"name\":\"x\",\"mappings\":[{\"kind\":\"axis\",\"code\":\"ABS_HAT0Y\",\"target\":\"dup\"},{\"kind\":\"button\",\"code\":\"BTN_SOUTH\",\"target\":\"south\"}]}")"
+if grep -q '"ok": true' <<<"$BAD_AXIS" && ! grep -q 'dup' config/__bad_axis.ini; then
+  ok "an axis binding with an unusable target is refused rather than silently dropped later"
+else
+  bad "invalid axis target reached the config" "$(grep -n 'axis\.' config/__bad_axis.ini 2>/dev/null)"
+fi
+rm -f config/__bad_axis.ini
 
 kill $WPID 2>/dev/null; wait $WPID 2>/dev/null
 

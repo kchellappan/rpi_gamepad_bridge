@@ -68,7 +68,11 @@ sudo ./scripts/install_web.sh --user you   # control panel on :8080
 The install script prints a URL and a generated password. From there you can do most things
 without SSH — see [Web control panel](#web-control-panel).
 
-Then teach it your controller's layout and point the config at the result:
+Then map your controller. The easiest way is **Start wizard** in the control panel, which
+shows you the device being emulated and asks which of your controls should act as each of
+its buttons.
+
+There is a terminal equivalent if you prefer:
 
 ```bash
 sudo systemctl stop gpbridge        # it holds the controller exclusively
@@ -77,9 +81,9 @@ sudo ./build/gpb-discover wizard /dev/input/by-id/<your-controller>
 sudo systemctl start gpbridge
 ```
 
-The wizard prints a config block to paste into `config/`. It asks you to press each control
-and records what actually arrives, which is the only reliable way to get this right —
-evdev's button names do not always correspond to physical positions.
+Either way it records what actually arrives when you press something, which is the only
+reliable way to get this right — evdev's button names do not always correspond to physical
+positions.
 
 ## Running it by hand
 
@@ -122,6 +126,28 @@ Changing a config restarts the bridge but leaves the USB device in place, so the
 a brief gap in reports rather than a controller disconnect. The **Re-enumerate gadget** button
 exists for when something has genuinely wedged; it is never triggered automatically, because
 re-enumeration *does* show the console a disconnect.
+
+### Mapping wizard
+
+The panel's wizard asks the question the useful way round. Rather than "press the bottom face
+button" and inferring what you meant, it shows a diagram of the device being emulated,
+highlights one control at a time, and asks which of *your* controls should act as it. You
+state the intent directly, so nothing has to be inferred — and evdev's misleading
+`BTN_NORTH`/`BTN_WEST` aliases stop mattering, because the code that arrives is simply
+recorded against the control you were pointing at.
+
+Each step times out and can be skipped, so a pad missing a control does not strand the run.
+The result is written as a **new** config — it never overwrites an existing one — with the
+name and description you give it. Configs can be deleted from the main page, except the one
+currently selected.
+
+Devices to emulate are data, not code: `targets/*.json` holds the control list, the labels,
+and the diagram geometry. Adding another is a JSON file, the same way adding an input is a
+new `InputSource`.
+
+Capture runs in `gpb-discover`, not in the web server, so the wizard and the terminal share
+one implementation of the parts that were hard to get right — resting baselines, the
+observed-axis rule, and rejecting an `absinfo` value that falls outside the axis's own range.
 
 ## Configuration
 
@@ -234,17 +260,25 @@ imports outside the standard library. CI runs all of it on every push.
 
 ## Verified configuration
 
-Verified against exactly one combination:
-
 | | |
 |---|---|
 | Board | Raspberry Pi 5 Model B Rev 1.0 |
 | OS | Raspberry Pi OS Bookworm, `2024-11-19` arm64, kernel `6.6.51` |
-| Controller | Google Stadia Controller rev. A, wired |
+| Controllers | Google Stadia Controller rev. A, and Sony DualSense (PS5) — both wired |
 | Console | Nintendo Switch 2, via the official dock |
 
-Newer kernels are untested. Other controllers should work through the same `EvdevSource`
-after a wizard run, but only the Stadia has been exercised.
+Both controllers pass the console's own controller test on sticks and buttons. The DualSense
+was mapped entirely through the web wizard with no code changes for the pad itself, which is
+the `EvdevSource` abstraction doing what it is for.
+
+Its layout differs from the Stadia's in ways worth knowing, because those differences are
+what surfaced several bugs: its d-pad arrives as a **hat** rather than four buttons, its
+triggers bind **digitally** as `BTN_TL2`/`BTN_TR2` rather than as analog axes, and it has no
+control to spare for Capture — its Create button reports `BTN_SELECT`, which is already
+Minus.
+
+Newer kernels are untested, and every further controller is an untested case until someone
+runs the wizard on it.
 
 ## License
 
