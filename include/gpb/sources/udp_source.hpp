@@ -39,6 +39,7 @@ class UdpSource final : public InputSource {
     uint64_t bad_tag = 0;      // failed authentication
     uint64_t bad_frame = 0;    // wrong size, magic or version
     uint64_t wrong_peer = 0;
+    uint64_t sessions = 0;
   };
   const Counters& counters() const { return counters_; }
 
@@ -50,6 +51,14 @@ class UdpSource final : public InputSource {
   int fd_ = -1;
   uint32_t last_seq_ = 0;
   bool have_seq_ = false;
+
+  // Sequence numbers are only comparable within one client session. A client that restarts
+  // begins again at 1, which is "older" than everything the previous run sent -- so without
+  // detecting the new session, a restarted client is locked out permanently and silently.
+  uint32_t last_from_ip_ = 0;
+  uint16_t last_from_port_ = 0;
+  uint64_t last_accept_ns_ = 0;
+  uint64_t session_gap_ns_ = 0;
   Counters counters_{};
 };
 

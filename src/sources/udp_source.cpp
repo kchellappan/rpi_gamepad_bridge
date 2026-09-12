@@ -20,6 +20,10 @@ UdpSource::UdpSource(const Config& cfg) {
   port_ = cfg.get_int("source.udp.port", 9871);
   peer_ = cfg.get("source.udp.peer");
   key_ = cfg.get("source.udp.key");
+  // A gap this long means the previous stream ended; the next datagram starts a new session
+  // and its sequence numbering is unrelated to what came before.
+  session_gap_ns_ = static_cast<uint64_t>(cfg.get_int("source.udp.session_gap_ms", 1000)) *
+                    1000000ull;
 }
 
 UdpSource::~UdpSource() { shutdown(); }
@@ -101,18 +105,38 @@ bool UdpSource::read(GamepadState& out) {
       continue;
     }
 
-    // Order of arrival is not order of sending. A datagram that lost a race has already been
-    // superseded, and applying it would move the controller backwards.
+    // Sequence numbers only order datagrams WITHIN one client session.
     //
-    // Comparing as a wrapped difference rather than "greater than" so a client that runs
-    // long enough to wrap its counter does not stall the link for the second half of the
-    // sequence space.
+    // A new session is either a different sender, or the same one after a gap. Both mean the
+    // counter has restarted and must not be compared against the previous run's. Without
+    // this, a client that is restarted begins at 1, every datagram looks stale against the
+    // old high-water mark, and the client is locked out permanently with no error anywhere
+    // -- which is the worst possible failure for something that restarts as routinely as an
+    // inference process.
+    const uint64_t now = now_mono_ns();
+    const uint32_t from_ip = from.sin_addr.s_addr;
+    const uint16_t from_port = from.sin_port;
+    const bool new_sender = from_ip != last_from_ip_ || from_port != last_from_port_;
+    const bool resumed = last_accept_ns_ != 0 && (now - last_accept_ns_) > session_gap_ns_;
+    if (new_sender || resumed) {
+      if (have_seq_) ++counters_.sessions;
+      have_seq_ = false;
+    }
+    last_from_ip_ = from_ip;
+    last_from_port_ = from_port;
+
+    // Within a session, order of arrival is not order of sending. A datagram that lost a
+    // race has already been superseded, and applying it would move the controller backwards.
+    //
+    // Compared as a wrapped difference rather than "greater than", so a long-running client
+    // whose counter wraps does not stall the link for half the sequence space.
     if (have_seq_ && static_cast<int32_t>(in.seq - last_seq_) <= 0) {
       ++counters_.stale;
       continue;
     }
     last_seq_ = in.seq;
     have_seq_ = true;
+    last_accept_ns_ = now;
 
     out = in;
     got = true;
