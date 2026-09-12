@@ -49,6 +49,10 @@ add_executable(gpb-latency tools/latency.cpp)
 add_library(gpb_client STATIC clients/cpp/src/client.cpp src/wire.cpp)
 target_include_directories(gpb_client PUBLIC include clients/cpp/include)
 
+# Emits fixed states and HMAC tags, so the suite can compare both against Python.
+add_executable(gpb-wire-test tests/wire_test.cpp src/wire.cpp)
+target_include_directories(gpb-wire-test PRIVATE include)
+
 add_executable(gpb-drive-example clients/cpp/examples/drive.cpp)
 target_link_libraries(gpb-drive-example PRIVATE gpb_client)
 

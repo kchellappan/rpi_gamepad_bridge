@@ -12,6 +12,8 @@ Standard library only, so submoduling this repo adds no dependencies to yours.
 from .state import GamepadState, Button
 from .control import ControlClient
 from .capture import CaptureReceiver
+from .capabilities import Capabilities, query_capabilities
 
-__all__ = ["GamepadState", "Button", "ControlClient", "CaptureReceiver"]
+__all__ = ["GamepadState", "Button", "ControlClient", "CaptureReceiver",
+           "Capabilities", "query_capabilities"]
 __version__ = "0.1.0"

@@ -333,6 +333,16 @@ else
   bad "could not build the wire self-test" "see above"
 fi
 
+# Byte-level agreement between the two client implementations. Same size is not same
+# layout, and a divergence here would corrupt control and capture at once, silently.
+if AGREEOUT="$(python3 tests/test_wire_agreement.py "$TMP/wire_test" 2>&1)"; then
+  echo "$AGREEOUT"
+  PASS=$((PASS + $(grep -c 'PASS' <<<"$AGREEOUT")))
+else
+  echo "$AGREEOUT"
+  FAIL=$((FAIL + $(grep -c 'FAIL' <<<"$AGREEOUT")))
+fi
+
 if NETOUT="$(python3 tests/test_network.py 2>&1)"; then
   echo "$NETOUT"
   PASS=$((PASS + $(grep -c 'PASS' <<<"$NETOUT")))
