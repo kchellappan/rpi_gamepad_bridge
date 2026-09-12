@@ -53,6 +53,15 @@ class InputSource {
     return false;
   }
 
+  // Why input is being discarded, as JSON, for the control panel.
+  //
+  // Every network misconfiguration this project has hit failed silently: a wrong key, a
+  // wrong peer address, a sequence number from a restarted client. The bridge knew in each
+  // case and had nowhere to say it, so the symptom was always "the client runs, nothing
+  // happens". Counters are the difference between that and "47 datagrams rejected: bad
+  // authentication".
+  virtual std::string counters_json() const { return "{}"; }
+
   // Handed the sink's advertisement at startup, so a network source can answer a client
   // asking what it is driving. Most sources have no way to be asked and ignore it.
   virtual void set_capabilities(const std::string&) {}

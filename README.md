@@ -124,6 +124,9 @@ restart itself. It also stays up while the bridge is stopped, which is half of w
   switch that could contradict it.
 - **No venv, no pip, no build step.** The server imports nothing outside the Python standard
   library, and CI enforces that rather than trusting it.
+- **It says why input is being discarded.** A wrong key, an unexpected sender address, or a
+  stale sequence number all used to present identically: the service healthy, the client
+  apparently sending, and nothing happening. The panel now names the reason and the count.
 
 Changing a config restarts the bridge but leaves the USB device in place, so the console sees
 a brief gap in reports rather than a controller disconnect. The **Re-enumerate gadget** button

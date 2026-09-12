@@ -267,6 +267,60 @@ def assess(bridge: dict, udc: dict, status: dict, loopback: bool = False) -> dic
             "detail": f"{status.get('submits', 0)} reports sent."}
 
 
+def assess_input(bridge: dict, status: dict, source: str) -> dict:
+    """Say why input is being discarded, rather than leaving it to be inferred from silence.
+
+    Every network misconfiguration this project has hit failed the same way: the service
+    healthy, the client apparently sending, and nothing happening. A wrong key, a peer
+    address that did not match, a sequence number from a restarted client -- the bridge knew
+    each time and had nowhere to say so.
+
+    The distinguishing signal is accepting nothing while rejecting something: that is a
+    misconfiguration, not bad luck. Rejections alongside accepted traffic are normal
+    (reordered datagrams, a stray probe) and worth noting without alarm.
+    """
+    counters = status.get("source_counters") or {}
+    if bridge.get("active") != "active":
+        return {"level": "idle", "headline": "Bridge stopped", "detail": ""}
+
+    # A controller source has nothing to reject; connectedness is the whole story.
+    if source == "evdev" or not counters:
+        if status.get("source_connected"):
+            return {"level": "ok", "headline": "Controller connected", "detail": ""}
+        return {"level": "idle", "headline": "Waiting for a controller",
+                "detail": "Nothing matching the config's device is plugged in."}
+
+    accepted = counters.get("accepted", 0)
+    reasons = [
+        ("bad_tag", "authentication failed",
+         "The key in the client does not match source.udp.key in the config."),
+        ("wrong_peer", "sender address not allowed",
+         "Datagrams arrived from an address other than source.udp.peer."),
+        ("bad_frame", "malformed datagrams",
+         "Wrong size, magic or version -- usually a client built against a different "
+         "wire format, or a key configured on one side only."),
+        ("stale", "out-of-date sequence numbers",
+         "Datagrams arrived out of order, or a client restarted within the session gap."),
+    ]
+    rejected = [(k, short, why) for k, short, why in reasons if counters.get(k, 0) > 0]
+
+    if accepted == 0:
+        if rejected:
+            key, short, why = max(rejected, key=lambda r: counters.get(r[0], 0))
+            return {"level": "bad",
+                    "headline": f"Input rejected: {short}",
+                    "detail": f"{counters.get(key, 0)} datagrams discarded and none accepted. {why}"}
+        return {"level": "idle", "headline": "No input received yet",
+                "detail": "Nothing has sent to this bridge since it started."}
+
+    if rejected:
+        summary = ", ".join(f"{counters.get(k, 0)} {short}" for k, short, _ in rejected)
+        return {"level": "ok", "headline": "Receiving input",
+                "detail": f"{accepted} accepted. Also discarded: {summary}."}
+    return {"level": "ok", "headline": "Receiving input",
+            "detail": f"{accepted} datagrams accepted."}
+
+
 # --------------------------------------------------------------------------- devices
 
 def list_input_devices() -> list[dict]:
@@ -867,6 +921,8 @@ class Handler(BaseHTTPRequestHandler):
             "gadget": unit_state(GADGET_UNIT),
             "udc": udc,
             "link": assess(bridge, udc, bstat, find_loopback_pad().get("found", False)),
+            "input": assess_input(bridge, bstat, next(
+                (c["source"] for c in configs if c["path"] == env["GPB_CONFIG"]), "")),
             "stats": bstat,
             # The running source is a property of the selected config, read from the file
             # rather than tracked separately, so the two cannot disagree.

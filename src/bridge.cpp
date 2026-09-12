@@ -120,14 +120,14 @@ void Bridge::publish_status(bool force) {
   const uint64_t since_ok_ms =
       stats_.last_write_ok_ns ? (now - stats_.last_write_ok_ns) / 1000000ull : 0;
 
-  char buf[1400];
+  char buf[1800];
   const int n = std::snprintf(
       buf, sizeof(buf),
       "{\"pid\":%d,\"uptime_ms\":%llu,\"source_connected\":%s,\"source\":\"%s\","
       "\"sink\":\"%s\",\"updates\":%llu,\"submits\":%llu,\"coalesced\":%llu,"
       "\"heartbeats\":%llu,\"disconnects\":%llu,\"reconnects\":%llu,"
       "\"write_failures\":%llu,\"ever_wrote\":%s,\"since_write_ok_ms\":%llu,"
-      "\"capabilities\":%s}\n",
+      "\"capabilities\":%s,\"source_counters\":%s}\n",
       static_cast<int>(getpid()), (unsigned long long)((now - started_ns_) / 1000000ull),
       src_ && src_->connected() ? "true" : "false", src_ ? src_->name() : "",
       sink_ ? sink_->name() : "", (unsigned long long)stats_.updates,
@@ -135,7 +135,7 @@ void Bridge::publish_status(bool force) {
       (unsigned long long)stats_.heartbeats, (unsigned long long)stats_.disconnects,
       (unsigned long long)stats_.reconnects, (unsigned long long)stats_.write_failures,
       stats_.last_write_ok_ns ? "true" : "false", (unsigned long long)since_ok_ms,
-      caps_json_.c_str());
+      caps_json_.c_str(), src_ ? src_->counters_json().c_str() : "{}");
   if (n <= 0) return;
 
   const std::string tmp = opts_.status_path + ".tmp";

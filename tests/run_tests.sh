@@ -298,6 +298,16 @@ else
   bad "scripts reference ids that are not in index.html" "$MISSING"
 fi
 
+# Input assessment: naming why datagrams are discarded, instead of leaving a
+# misconfiguration to present as silence.
+if INOUT="$(python3 tests/test_input_health.py 2>&1)"; then
+  echo "$INOUT"
+  PASS=$((PASS + $(grep -c 'PASS' <<<"$INOUT")))
+else
+  echo "$INOUT"
+  FAIL=$((FAIL + $(grep -c 'FAIL' <<<"$INOUT")))
+fi
+
 # Link assessment: the decision that previously reported a healthy connection throughout a
 # total outage.
 if HEALTHOUT="$(python3 tests/test_health.py 2>&1)"; then

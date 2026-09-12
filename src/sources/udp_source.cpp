@@ -165,6 +165,18 @@ bool UdpSource::read(GamepadState& out) {
   return true;
 }
 
+std::string UdpSource::counters_json() const {
+  char buf[320];
+  std::snprintf(buf, sizeof(buf),
+                "{\"accepted\":%llu,\"stale\":%llu,\"bad_tag\":%llu,\"bad_frame\":%llu,"
+                "\"wrong_peer\":%llu,\"queries\":%llu,\"sessions\":%llu}",
+                (unsigned long long)counters_.accepted, (unsigned long long)counters_.stale,
+                (unsigned long long)counters_.bad_tag, (unsigned long long)counters_.bad_frame,
+                (unsigned long long)counters_.wrong_peer, (unsigned long long)counters_.queries,
+                (unsigned long long)counters_.sessions);
+  return buf;
+}
+
 void UdpSource::shutdown() {
   if (fd_ >= 0) {
     ::close(fd_);
