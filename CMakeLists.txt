@@ -38,4 +38,7 @@ target_link_libraries(gpb-discover PRIVATE gpb_core)
 # Synthetic gamepad for testing the evdev path without hardware or a human.
 add_executable(gpb-fakepad tools/fake_pad.cpp)
 
-install(TARGETS gpbridge gpb-discover gpb-fakepad RUNTIME DESTINATION bin)
+# Loopback latency measurement: needs the OTG data leg plugged into the Pi's own USB-A port.
+add_executable(gpb-latency tools/latency.cpp)
+
+install(TARGETS gpbridge gpb-discover gpb-fakepad gpb-latency RUNTIME DESTINATION bin)

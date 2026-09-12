@@ -144,6 +144,10 @@ $SERVICE_USER ALL=(root) NOPASSWD: /usr/bin/systemctl stop gpbridge.service
 $SERVICE_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart gpbridge.service
 $SERVICE_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart gpb-gadget.service
 $SERVICE_USER ALL=(root) NOPASSWD: /usr/bin/journalctl -u gpbridge.service *
+# Latency measurement writes directly to /dev/hidg0, which is root-only. The binary reads a
+# gamepad node and the gadget and prints timings; it writes nothing else and takes no path
+# that is not one of those two.
+$SERVICE_USER ALL=(root) NOPASSWD: $REPO/build/gpb-latency *
 SUDO
 chmod 440 "$SUDOERS"
 # A malformed sudoers file can lock the machine out of sudo entirely, so validate it and

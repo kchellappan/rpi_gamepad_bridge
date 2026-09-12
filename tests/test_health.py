@@ -47,6 +47,23 @@ for name, bridge, udc, stats, expected in cases:
         print(f"        expected level={expected!r}, got {got!r}")
         failures += 1
 
+# A loopback into this Pi's own USB-A port fails writes whenever nothing is reading the
+# gadget, because usbhid only polls while a client has the node open. That is normal, and
+# calling it a wedged console sends the user to re-enumerate something that works.
+loop = assess(ACTIVE, ATTACHED, WEDGED, loopback=True)
+if loop["level"] == "idle" and "loop" in loop["headline"].lower():
+    print("  PASS  a loopback with no reader is reported as normal, not as a fault")
+else:
+    print(f"  FAIL  loopback misreported: {loop!r}")
+    failures += 1
+
+# ...but the same symptoms WITHOUT a loopback are still a genuine fault.
+if assess(ACTIVE, ATTACHED, WEDGED, loopback=False)["level"] == "bad":
+    print("  PASS  the same symptoms without a loopback remain a fault")
+else:
+    print("  FAIL  loopback handling swallowed a real fault")
+    failures += 1
+
 # The specific regression, stated plainly: a configured link with dead writes must never be
 # reported as fine.
 verdict = assess(ACTIVE, ATTACHED, WEDGED)

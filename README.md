@@ -149,6 +149,44 @@ Capture runs in `gpb-discover`, not in the web server, so the wizard and the ter
 one implementation of the parts that were hard to get right — resting baselines, the
 observed-axis rule, and rejecting an `absinfo` value that falls outside the axis's own range.
 
+### Latency measurement
+
+The panel can measure the real input-to-output time. It needs a **loopback**: move the OTG
+cable's data leg from the console into one of the Pi's own USB-A ports. `dwc2` (device) and
+RP1 (host) are independent controllers, so the Pi enumerates its own gadget and can watch
+what it sends.
+
+The page walks through the setup, notices the loopback appearing, and then measures
+continuously until you stop it or a minute elapses — whichever comes first. Samples,
+median and worst case update live, and stopping early keeps everything collected so far.
+
+The cap exists because the bridge is stopped for the duration: a forgotten tab should not
+hold it down indefinitely.
+
+What it measures:
+
+```
+/dev/hidg0 -> USB -> host -> evdev
+```
+
+The bridge is stopped for the run, because it holds the gadget open, and the report is
+written directly. Its own processing — a read, an encode, a write — is microseconds against a
+total set by the polling interval, so including it would change nothing this can resolve.
+
+The controller's own latency is not included and cannot be, because nothing in software can
+press a physical button — that needs a GPIO bridged across a button's contacts. The results
+say so rather than quietly presenting a flattering number.
+
+Expect roughly **1 ms**. Measured on the reference setup: median 0.94 ms, with essentially
+every sample falling in the same 0.1 ms bucket. That single spike *is* the finding
+— the USB polling interval quantises everything, and there is no software overhead visible
+above it.
+
+While the cable is looped back, the panel will report **"Looped back to this Pi"** rather
+than a healthy link. That is correct: `usbhid` only polls a HID device's interrupt endpoint
+while something has its input node open, so with no reader the reports simply queue. The
+measurement opens the node itself, which is why it works regardless.
+
 ## Configuration
 
 One INI file selects the source and sink, maps the controller, and shapes the sticks. Two
@@ -252,6 +290,7 @@ here unlocks them without the licensed silicon.
 | `gpbridge` | The bridge itself |
 | `gpb-discover` | `list` devices, dump `caps`, or run the mapping `wizard` |
 | `gpb-fakepad` | A uinput-backed virtual gamepad, for testing without hardware |
+| `gpb-latency` | Loopback latency measurement; the panel drives it |
 | `web/gpb_web.py` | The control panel; standard library only, no pip |
 
 ## Tests

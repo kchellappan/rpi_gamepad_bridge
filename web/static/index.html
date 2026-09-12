@@ -96,6 +96,18 @@
   <section class="panel">
     <div class="panel-head row">
       <div>
+        <h2>Latency</h2>
+        <p class="hint">Measure the real input-to-output time, end to end.</p>
+      </div>
+      <button id="lat-open" class="btn">Measure</button>
+    </div>
+    <p class="hint">Needs a loopback: the OTG data leg moved from the console into one of the
+      Pi's own USB-A ports. The bridge is stopped during the run and restarted afterwards.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head row">
+      <div>
         <h2>Logs</h2>
         <p class="hint">journalctl &mdash; gpbridge.service</p>
       </div>
@@ -170,9 +182,70 @@
   </div>
 </div>
 
+<div id="latency" class="overlay" hidden>
+  <div class="sheet">
+    <header class="sheet-head">
+      <div>
+        <h2>Latency measurement</h2>
+        <p class="hint" id="lat-sub">&nbsp;</p>
+      </div>
+      <button id="lat-close" class="btn btn-quiet">Close</button>
+    </header>
+    <div class="sheet-body">
+      <div id="lat-setup" class="wiz-step">
+        <ol class="steps">
+          <li>Unplug the OTG cable's <strong>data leg</strong> from the console.</li>
+          <li>Plug it into a <strong>free USB-A port on the Pi itself</strong>. The Pi then
+              enumerates its own gadget and can watch what it sends.</li>
+          <li>Leave the power leg alone.</li>
+        </ol>
+        <p class="wiz-note" id="lat-detect">Looking for the loopback…</p>
+        <p class="warn-box">The bridge is stopped during the run, because it holds the gadget
+          open, and restarted afterwards. The console receives nothing while it runs.</p>
+        <div class="actions">
+          <button id="lat-run" class="btn btn-primary" disabled>Start measuring</button>
+        </div>
+        <p class="hint">Runs until you stop it, or one minute, whichever comes first.</p>
+      </div>
+
+      <div id="lat-running" class="wiz-step" hidden>
+        <div class="stat-row">
+          <div class="stat"><span class="stat-v" id="run-n">0</span><span class="stat-k">samples</span></div>
+          <div class="stat"><span class="stat-v" id="run-p50">—</span><span class="stat-k">median</span></div>
+          <div class="stat"><span class="stat-v" id="run-max">—</span><span class="stat-k">worst</span></div>
+          <div class="stat"><span class="stat-v" id="run-left">60</span><span class="stat-k">seconds left</span></div>
+        </div>
+        <svg id="run-chart" class="chart" role="img" aria-label="latency so far"></svg>
+        <p class="hint">Injecting inputs and timing when the host sees them. The worst case is
+          what a longer run is for — it needs time to show up.</p>
+        <div class="actions">
+          <button id="lat-stop" class="btn btn-primary">Stop and show results</button>
+        </div>
+      </div>
+
+      <div id="lat-results" class="wiz-step" hidden>
+        <div class="stat-row">
+          <div class="stat"><span class="stat-v" id="lat-p50">—</span><span class="stat-k">median</span></div>
+          <div class="stat"><span class="stat-v" id="lat-min">—</span><span class="stat-k">best</span></div>
+          <div class="stat"><span class="stat-v" id="lat-p95">—</span><span class="stat-k">95th pct</span></div>
+          <div class="stat"><span class="stat-v" id="lat-max">—</span><span class="stat-k">worst</span></div>
+        </div>
+        <svg id="lat-chart" class="chart" role="img" aria-label="latency distribution"></svg>
+        <p class="hint" id="lat-detail">&nbsp;</p>
+        <p class="wiz-note" id="lat-interp"></p>
+        <div class="actions">
+          <button id="lat-again" class="btn">Run again</button>
+          <button id="lat-done" class="btn btn-primary">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="/mapping.js"></script>
 <script src="/app.js"></script>
 <script src="/wizard.js"></script>
+<script src="/latency.js"></script>
 </body>
 </html>

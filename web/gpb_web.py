@@ -22,7 +22,10 @@ import secrets
 import shutil
 import subprocess
 import sys
+import signal
+import tempfile
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,6 +41,7 @@ CONFIG_DIR = REPO / "config"
 TARGET_DIR = REPO / "targets"
 STATUS_FILE = Path(os.environ.get("GPB_STATUS", "/var/lib/gpbridge/status.json"))
 DISCOVER = REPO / "build" / "gpb-discover"
+LATENCY = REPO / "build" / "gpb-latency"
 
 BRIDGE_UNIT = "gpbridge.service"
 GADGET_UNIT = "gpb-gadget.service"
@@ -196,7 +200,7 @@ def bridge_status() -> dict:
         return {}
 
 
-def assess(bridge: dict, udc: dict, status: dict) -> dict:
+def assess(bridge: dict, udc: dict, status: dict, loopback: bool = False) -> dict:
     """Decide what to actually tell the user about the link.
 
     "A host is attached" and "the host is accepting reports" are different claims, and only
@@ -228,6 +232,16 @@ def assess(bridge: dict, udc: dict, status: dict) -> dict:
     stale = status.get("since_write_ok_ms", 0)
     failures = status.get("write_failures", 0)
     never = not status.get("ever_wrote", False)
+
+    # Looped back into this Pi's own USB-A port for a latency run. Writes failing here is
+    # normal and not a fault: usbhid only polls a HID device's interrupt endpoint while
+    # something has its input node open, so with no reader the reports simply queue. Calling
+    # that a wedged console would send someone re-enumerating a gadget that is working.
+    if loopback and (never or failures > 20):
+        return {"level": "idle", "headline": "Looped back to this Pi",
+                "detail": "The gadget is plugged into this Pi rather than a console. Reports "
+                          "only flow while something reads it, which the latency measurement "
+                          "does. Nothing is wrong."}
 
     # Attached, but nothing is getting through. This is the state that previously displayed
     # as a healthy connection.
@@ -469,6 +483,157 @@ def delete_config(path_str: str) -> tuple[bool, str]:
     return True, "deleted"
 
 
+# --------------------------------------------------------------------------- latency
+
+# The gadget presents itself with these IDs, so this is how the Pi recognises its own gadget
+# when the OTG data leg is looped back into one of its USB-A ports.
+GADGET_VID_PID = "0f0d:00c1"
+
+
+def find_loopback_pad() -> dict:
+    """Locate the Pi's own gadget, seen as an ordinary USB gamepad.
+
+    Returns the evdev node if the loopback cable is in place. Its absence is the normal
+    state -- the cable is usually in a console -- so this is a question, not an error.
+    """
+    by_id = Path("/dev/input/by-id")
+    if by_id.is_dir():
+        for link in sorted(by_id.iterdir()):
+            # The gadget's product string is what udev builds the by-id name from.
+            if "NSGamepad" in link.name and link.name.endswith("event-joystick"):
+                try:
+                    return {"found": True, "path": str(link), "event": str(link.resolve())}
+                except OSError:
+                    continue
+
+    # udev may not have produced a by-id link; fall back to matching the device name.
+    for node in sorted(Path("/dev/input").glob("event*")):
+        try:
+            with open(node, "rb", buffering=0) as fh:
+                import fcntl as _fcntl
+                buf = bytearray(256)
+                _fcntl.ioctl(fh, (2 << 30) | (256 << 16) | (0x45 << 8) | 0x06, buf)
+                if b"NSGamepad" in buf:
+                    return {"found": True, "path": str(node), "event": str(node)}
+        except OSError:
+            continue
+    return {"found": False}
+
+
+class LatencyRun:
+    """A measurement in progress.
+
+    The run is a child process writing one sample per line, so progress is just "read what
+    has been written so far". That keeps the server out of the timing path entirely -- it
+    never has to be scheduled promptly for a sample to be accurate, which a server-side
+    sampling loop would have required.
+
+    One run at a time: the bridge is stopped for the duration, and two concurrent runs would
+    both be writing to the gadget.
+    """
+
+    def __init__(self):
+        self.proc = None
+        self.out = None
+        self.path = None
+        self.started = 0.0
+        self.bridge_was_active = False
+        self.lock = threading.Lock()
+
+    def active(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def start(self, device: str, duration_ms: int) -> dict:
+        with self.lock:
+            if self.active():
+                return {"ok": False, "error": "a measurement is already running"}
+            if not LATENCY.is_file():
+                return {"ok": False, "error": "gpb-latency is not built"}
+
+            self.bridge_was_active = unit_state(BRIDGE_UNIT)["active"] == "active"
+            systemctl("stop", BRIDGE_UNIT)   # it holds /dev/hidg0 open
+
+            self.path = Path(tempfile.gettempdir()) / f"gpb-latency-{os.getpid()}.out"
+            self.out = open(self.path, "w+")
+            try:
+                self.proc = subprocess.Popen(
+                    ["sudo", "-n", str(LATENCY), "--device", device,
+                     "--duration-ms", str(duration_ms)],
+                    stdout=self.out, stderr=subprocess.STDOUT, text=True)
+            except OSError as e:
+                self._restore()
+                return {"ok": False, "error": f"could not start: {e}"}
+            self.started = time.monotonic()
+            return {"ok": True, "duration_ms": duration_ms}
+
+    def read(self) -> dict:
+        """Samples so far, plus the summary once the child has finished."""
+        samples, summary = [], None
+        if self.path and self.path.exists():
+            try:
+                for line in self.path.read_text().splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("{"):
+                        try:
+                            summary = json.loads(line)
+                        except json.JSONDecodeError:
+                            pass
+                    else:
+                        try:
+                            samples.append(float(line))
+                        except ValueError:
+                            pass
+            except OSError:
+                pass
+        return {"samples": samples, "summary": summary}
+
+    def progress(self) -> dict:
+        data = self.read()
+        running = self.active()
+        if not running:
+            self._restore()
+        s = sorted(data["samples"])
+        stats = {}
+        if s:
+            stats = {
+                "n": len(s), "min_ms": s[0], "max_ms": s[-1],
+                "p50_ms": s[len(s) // 2],
+                "p95_ms": s[min(len(s) - 1, int(0.95 * (len(s) - 1)))],
+                "mean_ms": sum(s) / len(s),
+            }
+        return {"ok": True, "running": running,
+                "elapsed_ms": int((time.monotonic() - self.started) * 1000) if self.started else 0,
+                "samples": data["samples"], "summary": data["summary"], **stats}
+
+    def stop(self) -> dict:
+        with self.lock:
+            if self.proc is not None and self.proc.poll() is None:
+                # SIGINT rather than kill: the tool finishes the sample in flight and prints
+                # its summary, so stopping early does not discard the run.
+                self.proc.send_signal(signal.SIGINT)
+                try:
+                    self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+        return self.progress()
+
+    def _restore(self):
+        if self.out is not None:
+            try:
+                self.out.close()
+            except OSError:
+                pass
+            self.out = None
+        if self.bridge_was_active:
+            systemctl("start", BRIDGE_UNIT)
+            self.bridge_was_active = False
+
+
+LATENCY_RUN = LatencyRun()
+
+
 # --------------------------------------------------------------------------- auth
 
 def load_credentials() -> tuple[str, str | None]:
@@ -570,6 +735,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("wizard.js", "application/javascript")
         if path == "/mapping.js":
             return self._static("mapping.js", "application/javascript")
+        if path == "/latency.js":
+            return self._static("latency.js", "application/javascript")
         self._send(HTTPStatus.NOT_FOUND, b'{"error":"not found"}')
 
     def do_POST(self):
@@ -593,6 +760,23 @@ class Handler(BaseHTTPRequestHandler):
             # leaves the USB device in place.
             rc, out = systemctl("restart", GADGET_UNIT)
             return self._json({"ok": rc == 0, "message": out.strip() or "gadget re-enumerated"})
+
+        if path == "/api/latency/detect":
+            return self._json(find_loopback_pad())
+
+        if path == "/api/latency/start":
+            pad = find_loopback_pad()
+            if not pad.get("found"):
+                return self._json({"ok": False,
+                                   "error": "the loopback cable is not connected"})
+            duration = max(1000, min(int(payload.get("duration_ms", 60000)), 60000))
+            return self._json(LATENCY_RUN.start(pad["event"], duration))
+
+        if path == "/api/latency/progress":
+            return self._json(LATENCY_RUN.progress())
+
+        if path == "/api/latency/stop":
+            return self._json(LATENCY_RUN.stop())
 
         if path == "/api/wizard/begin":
             # The bridge grabs the controller exclusively, so it has to let go before the
@@ -672,7 +856,7 @@ class Handler(BaseHTTPRequestHandler):
             "bridge": bridge,
             "gadget": unit_state(GADGET_UNIT),
             "udc": udc,
-            "link": assess(bridge, udc, bstat),
+            "link": assess(bridge, udc, bstat, find_loopback_pad().get("found", False)),
             "stats": bstat,
             "active": {"config": env["GPB_CONFIG"], "source": env["GPB_SOURCE"]},
             "configs": configs,
