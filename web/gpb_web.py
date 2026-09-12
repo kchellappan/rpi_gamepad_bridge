@@ -321,6 +321,48 @@ def assess_input(bridge: dict, status: dict, source: str) -> dict:
             "detail": f"{accepted} datagrams accepted."}
 
 
+def assess_capture(bridge: dict, status: dict) -> dict:
+    """Capture health, where "health" means the parts that are actually knowable.
+
+    Dropped recordings are knowable and matter: the ring is bounded on purpose, because a
+    stalled disk must never block live input, so overflow silently discards training
+    samples. That deserves to be loud.
+
+    Delivery of published capture is NOT knowable from here, and the panel should not
+    pretend otherwise. UDP sendto succeeds whether or not anyone is listening, so `failed`
+    counts local send errors only. Whether the datagrams arrived is a question only the
+    receiving end can answer -- CaptureReceiver counts what it gets, and that is where to
+    look.
+    """
+    cap = status.get("capture") or {}
+    if bridge.get("active") != "active" or not cap:
+        return {"level": "off", "headline": "", "detail": ""}
+    recording, publishing = cap.get("recording"), cap.get("publishing")
+    if not recording and not publishing:
+        return {"level": "off", "headline": "", "detail": ""}
+
+    dropped, written = cap.get("dropped", 0), cap.get("written", 0)
+    sent, failed = cap.get("sent", 0), cap.get("failed", 0)
+
+    if recording and dropped:
+        return {"level": "bad", "headline": "Dropping capture samples",
+                "detail": f"{dropped} states discarded, {written} written. The ring filled "
+                          "faster than it drained -- raise bridge.record_ring_slots, or "
+                          "check what is holding up the disk."}
+    if publishing and failed:
+        return {"level": "warn", "headline": "Some capture datagrams could not be sent",
+                "detail": f"{failed} local send errors against {sent} sent. Check the route "
+                          "to bridge.publish_host."}
+
+    bits = []
+    if recording:
+        bits.append(f"{written} states recorded")
+    if publishing:
+        # Deliberately "sent", not "delivered".
+        bits.append(f"{sent} published (delivery is only visible at the receiver)")
+    return {"level": "ok", "headline": "Capturing", "detail": "; ".join(bits) + "."}
+
+
 # --------------------------------------------------------------------------- devices
 
 def list_input_devices() -> list[dict]:
@@ -921,6 +963,7 @@ class Handler(BaseHTTPRequestHandler):
             "gadget": unit_state(GADGET_UNIT),
             "udc": udc,
             "link": assess(bridge, udc, bstat, find_loopback_pad().get("found", False)),
+            "capture": assess_capture(bridge, bstat),
             "input": assess_input(bridge, bstat, next(
                 (c["source"] for c in configs if c["path"] == env["GPB_CONFIG"]), "")),
             "stats": bstat,

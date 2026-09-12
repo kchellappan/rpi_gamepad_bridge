@@ -59,8 +59,11 @@ function renderStatus(s) {
   // One banner, showing whichever end is actually broken. Input problems are surfaced here
   // as loudly as USB ones because they fail identically from the user's side -- the service
   // healthy, the client apparently sending, and nothing happening.
+  // Dropped capture samples are silent data loss, so they belong in the banner beside a
+  // dead USB link rather than only on a card.
   const worst = link.level === 'bad' ? link
               : input.level === 'bad' ? input
+              : (s.capture && s.capture.level === 'bad') ? s.capture
               : link.level !== 'ok' ? link : input;
   const banner = $('link-banner');
   banner.className = 'banner ' + worst.level;
@@ -70,6 +73,14 @@ function renderStatus(s) {
   // Re-enumerating only helps the USB end; offering it for an input problem would be
   // pointing at the wrong half of the system.
   $('link-fix').hidden = !(worst === link && link.level === 'bad');
+
+  // Only shown when something is actually capturing, so the common case stays uncluttered.
+  const cap = s.capture || { level: 'off' };
+  $('card-capture').hidden = cap.level === 'off';
+  $('capture-state').textContent = cap.headline || '—';
+  $('capture-state').className = 'state ' + (cap.level === 'ok' ? 'ok'
+                                          : cap.level === 'bad' ? 'bad' : 'warn');
+  $('capture-detail').textContent = cap.detail || '';
 
   const st0 = s.stats || {};
   $('input-state').textContent = input.headline || '—';
