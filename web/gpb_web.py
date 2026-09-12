@@ -581,8 +581,10 @@ class LatencyRun:
                         except json.JSONDecodeError:
                             pass
                     else:
+                        # "b 0.945" / "a 0.951"; a bare number is the older untagged form.
+                        parts = line.split()
                         try:
-                            samples.append(float(line))
+                            samples.append(float(parts[-1]))
                         except ValueError:
                             pass
             except OSError:
