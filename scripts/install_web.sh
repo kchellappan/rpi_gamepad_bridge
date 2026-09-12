@@ -115,9 +115,9 @@ if [[ ! -f "$ENVFILE" ]]; then
   [[ -n "$DEFAULT_CONFIG" ]] || { echo "no config/*.ini to default to" >&2; exit 1; }
   cat > "$ENVFILE" <<ENV
 # Written by gpb-web. The .ini files remain the source of truth;
-# this only selects which one the service starts with.
+# this only selects which one the service starts with. The source
+# (controller, network, socket) is declared by the config itself.
 GPB_CONFIG=$DEFAULT_CONFIG
-GPB_SOURCE=evdev
 ENV
   echo "==> seeded $ENVFILE -> $(basename "$DEFAULT_CONFIG")"
 fi

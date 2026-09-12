@@ -7,11 +7,14 @@ After=gpb-gadget.service
 [Service]
 Type=simple
 
-# Which config and which input source to use. Rewritten by gpb-web when the user selects a
-# different one; the config files themselves stay the source of truth, so a change made here
-# is visible to someone on SSH and vice versa.
+# Which config to run. Rewritten by gpb-web when the user selects a different one.
+#
+# The input source is NOT set here. It is declared by the config, and only there -- passing
+# --source as well meant two places stated the same fact and the flag won silently, so a
+# config reading `source = udp` could be running a Unix socket with nothing to say so.
+# gpbridge still accepts --source on the command line for one-off testing by hand.
 EnvironmentFile=@ENVFILE@
-ExecStart=@REPO@/build/gpbridge --config ${GPB_CONFIG} --source ${GPB_SOURCE} --status @STATEDIR@/status.json
+ExecStart=@REPO@/build/gpbridge --config ${GPB_CONFIG} --status @STATEDIR@/status.json
 
 # The bridge already tolerates a missing controller and reconnects on its own, so a
 # restart here is for genuine crashes only -- not for the pad being unplugged.

@@ -222,3 +222,20 @@ main { max-width: 880px; margin: 0 auto; padding: 1.25rem; display: grid; gap: 1
 .chart .grid { stroke: var(--line); stroke-width: 1; }
 .chart .tick { font-size: 9px; fill: var(--ink-soft); }
 .chart .axis-label { font-size: 9px; letter-spacing: .04em; opacity: .8; }
+
+/* ----------------------------------------------------------------- kind tabs */
+.tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--line); margin-bottom: .8rem; }
+.tab {
+  font: inherit; font-size: .87rem; font-weight: 550; padding: .5rem .9rem;
+  border: 0; background: transparent; color: var(--ink-soft); cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.tab .count {
+  font-size: .72rem; opacity: .65; margin-left: .35rem; font-variant-numeric: tabular-nums;
+}
+.tab .live-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok); margin-left: .4rem; vertical-align: 1px;
+}
