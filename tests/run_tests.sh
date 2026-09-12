@@ -308,6 +308,39 @@ else
   FAIL=$((FAIL + $(grep -c 'FAIL' <<<"$HEALTHOUT")))
 fi
 
+# ---------------------------------------------------------------- 6b. wire + network
+echo "wire format and network transport"
+# Vendored crypto is only a reasonable trade if it is checked against a reference rather
+# than trusted because it compiles: a wrong hash still produces confident output.
+if g++ -std=c++20 -O2 -Iinclude tests/wire_test.cpp src/wire.cpp -o "$TMP/wire_test" 2>/dev/null \
+   && "$TMP/wire_test" > "$TMP/tags.txt" 2>/dev/null; then
+  if python3 - "$TMP/tags.txt" <<'PYH'
+import hashlib, hmac, sys
+cases = [(b"", b""), (b"k", b"hello"),
+         (b"a-longer-key-than-one-byte", b"the quick brown fox"),
+         (b"0123456789012345678901234567890123456789012345678901234567890123456789", b"x"),
+         (b"gpb", b"\x01\x02\x03\x04")]
+want = [hmac.new(k, m, hashlib.sha256).hexdigest()[:32] for k, m in cases]
+got = [l.strip() for l in open(sys.argv[1])]
+sys.exit(0 if want == got else 1)
+PYH
+  then
+    ok "the vendored HMAC-SHA256 matches python's reference implementation"
+  else
+    bad "vendored HMAC does not match the reference" "$(cat "$TMP/tags.txt")"
+  fi
+else
+  bad "could not build the wire self-test" "see above"
+fi
+
+if NETOUT="$(python3 tests/test_network.py 2>&1)"; then
+  echo "$NETOUT"
+  PASS=$((PASS + $(grep -c 'PASS' <<<"$NETOUT")))
+else
+  echo "$NETOUT"
+  FAIL=$((FAIL + $(grep -c 'FAIL' <<<"$NETOUT")))
+fi
+
 # ---------------------------------------------------------------- 7. no dependency creep
 echo "python dependency check"
 if OUT="$(python3 tests/check_stdlib_only.py 2>&1)"; then

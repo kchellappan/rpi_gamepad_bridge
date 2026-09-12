@@ -11,6 +11,7 @@
 #include <vector>
 #include "gpb/input_source.hpp"
 #include "gpb/output_sink.hpp"
+#include "gpb/publisher.hpp"
 #include "gpb/recorder.hpp"
 #include "gpb/transform.hpp"
 
@@ -20,6 +21,12 @@ struct BridgeOptions {
   bool rumble = false;          // reverse channel, off by default
   bool record = false;
   std::string record_path;
+
+  // Publish each state to another machine as it happens, for a consumer aligning it against
+  // video it is capturing itself. Empty host disables it.
+  std::string publish_host;
+  int publish_port = 9872;
+  std::string publish_key;
   size_t record_ring_slots = 8192;
   int rt_priority = 0;          // 0 disables SCHED_FIFO
   int cpu_affinity = -1;        // -1 disables pinning
@@ -65,6 +72,7 @@ class Bridge {
   std::vector<std::unique_ptr<Transform>> transforms_;
   BridgeOptions opts_;
   Recorder recorder_;
+  Publisher publisher_;
 
   GamepadState current_{};
   GamepadState last_sent_{};

@@ -38,6 +38,8 @@ bool Bridge::initialize(std::string& err) {
 
   if (opts_.record && !recorder_.start(opts_.record_path, opts_.record_ring_slots, err))
     return false;
+  if (!publisher_.start(opts_.publish_host, opts_.publish_port, opts_.publish_key, err))
+    return false;
 
   epfd_ = ::epoll_create1(EPOLL_CLOEXEC);
   if (epfd_ < 0) {
@@ -232,6 +234,7 @@ int Bridge::run() {
           for (auto& t : transforms_) t->apply(current_);
 
         if (opts_.record) recorder_.record(current_);
+        publisher_.publish(current_);
         submit_current();
 
       } else if (fd == timerfd_) {

@@ -1,6 +1,8 @@
 #include "gpb/sources/socket_source.hpp"
 
 #include <fcntl.h>
+#include <grp.h>
+#include <sys/stat.h>
 #include <cstring>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -14,6 +16,11 @@ namespace gpb {
 
 SocketSource::SocketSource(const Config& cfg) {
   path_ = cfg.get("source.socket.path", "/run/gpbridge.sock");
+  // The bridge runs as root, so a socket left at the default mode is reachable only by
+  // root -- which defeats the point of a source that exists for external programs. 0660
+  // with a group is the useful default; set source.socket.mode = 0600 to lock it down.
+  mode_ = static_cast<unsigned>(cfg.get_int("source.socket.mode", 0660));
+  group_ = cfg.get("source.socket.group");
 }
 
 SocketSource::~SocketSource() { shutdown(); }
@@ -42,8 +49,20 @@ bool SocketSource::initialize(std::string& err) {
     err = "listen " + path_ + ": " + std::strerror(errno);
     return false;
   }
-  std::fprintf(stderr, "[socket] listening on %s (payload: %zu-byte GamepadState)\n",
-               path_.c_str(), sizeof(GamepadState));
+  if (::chmod(path_.c_str(), mode_) != 0)
+    std::fprintf(stderr, "[socket] chmod %04o failed: %s\n", mode_, std::strerror(errno));
+  if (!group_.empty()) {
+    const struct group* g = ::getgrnam(group_.c_str());
+    if (g == nullptr) {
+      std::fprintf(stderr, "[socket] no such group \"%s\"; leaving ownership alone\n",
+                   group_.c_str());
+    } else if (::chown(path_.c_str(), static_cast<uid_t>(-1), g->gr_gid) != 0) {
+      std::fprintf(stderr, "[socket] chgrp %s failed: %s\n", group_.c_str(),
+                   std::strerror(errno));
+    }
+  }
+  std::fprintf(stderr, "[socket] listening on %s (mode %04o, payload: %zu-byte GamepadState)\n",
+               path_.c_str(), mode_, sizeof(GamepadState));
   return true;
 }
 

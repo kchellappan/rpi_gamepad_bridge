@@ -15,14 +15,17 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g")
 
 add_library(gpb_core STATIC
+  src/wire.cpp
   src/config.cpp
   src/rt.cpp
   src/transform.cpp
   src/recorder.cpp
+  src/publisher.cpp
   src/bridge.cpp
   src/factory.cpp
   src/sources/evdev_source.cpp
   src/sources/socket_source.cpp
+  src/sources/udp_source.cpp
   src/sinks/ns_hid_sink.cpp
 )
 target_include_directories(gpb_core PUBLIC include)
