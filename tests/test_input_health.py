@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Input assessment: naming why datagrams are being discarded.
+"""Panel health assessments: input rejection, and capture loss.
 
 Every network misconfiguration in this project's history failed the same way -- the service
 healthy, the client apparently sending, nothing happening. A wrong key, a peer address that
@@ -14,7 +14,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "web"))
-from gpb_web import assess_input  # noqa: E402
+from gpb_web import assess_capture, assess_input  # noqa: E402
 
 ACTIVE = {"active": "active"}
 STOPPED = {"active": "inactive"}
@@ -71,5 +71,42 @@ check("a missing controller is idle, not an error",
       assess_input(ACTIVE, {"source_connected": False}, "evdev")["level"] == "idle")
 check("a stopped bridge is idle regardless of counters",
       assess_input(STOPPED, counters(bad_tag=99), "udp")["level"] == "idle")
+
+
+# --------------------------------------------------------------- capture
+#
+# The recorder's ring is bounded deliberately: a stalled disk must never block live input,
+# so overflow discards training samples instead. That is silent data loss and has to be
+# loud. Published capture is different -- UDP sendto succeeds whether or not anyone is
+# listening, so the panel must not imply delivery it cannot observe.
+
+def capture(**kw):
+    base = {"recording": False, "written": 0, "dropped": 0,
+            "publishing": False, "sent": 0, "failed": 0}
+    base.update(kw)
+    return {"capture": base}
+
+
+r = assess_capture(ACTIVE, capture(recording=True, written=100, dropped=7))
+check("dropped capture samples are reported as a fault",
+      r["level"] == "bad" and "7" in r["detail"], repr(r))
+
+r = assess_capture(ACTIVE, capture(recording=True, written=5000))
+check("healthy recording is ok", r["level"] == "ok" and "5000" in r["detail"], repr(r))
+
+r = assess_capture(ACTIVE, capture(publishing=True, sent=900, failed=4))
+check("local send errors are a warning, not a fault",
+      r["level"] == "warn" and "4" in r["detail"], repr(r))
+
+# The wording matters: sendto succeeding is not evidence anything arrived.
+r = assess_capture(ACTIVE, capture(publishing=True, sent=900))
+check("publishing claims datagrams sent, never delivered",
+      r["level"] == "ok" and "delivered" not in r["detail"].lower()
+      and "receiver" in r["detail"].lower(), repr(r))
+
+check("capture is hidden when neither recording nor publishing",
+      assess_capture(ACTIVE, capture())["level"] == "off")
+check("capture is hidden when the bridge is stopped",
+      assess_capture(STOPPED, capture(recording=True, dropped=99))["level"] == "off")
 
 sys.exit(1 if failures else 0)

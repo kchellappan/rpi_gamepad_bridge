@@ -124,6 +124,10 @@ restart itself. It also stays up while the bridge is stopped, which is half of w
   switch that could contradict it.
 - **No venv, no pip, no build step.** The server imports nothing outside the Python standard
   library, and CI enforces that rather than trusting it.
+- **It reports capture loss.** The recorder's ring is bounded on purpose — a stalled disk
+  must never block live input — so overflow discards states rather than blocking. That is
+  silent data loss, and the panel now says so. Published capture is reported as *sent*, never
+  as delivered: UDP cannot tell you whether anyone received it, and only the receiver can.
 - **It says why input is being discarded.** A wrong key, an unexpected sender address, or a
   stale sequence number all used to present identically: the service healthy, the client
   apparently sending, and nothing happening. The panel now names the reason and the count.
