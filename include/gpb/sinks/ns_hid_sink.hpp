@@ -39,6 +39,7 @@ class NsHidSink final : public OutputSink {
   bool flush() override;
 
   std::chrono::nanoseconds cadence() const override { return cadence_; }
+  Capabilities capabilities() const override;
   void shutdown() override;
   const char* name() const override { return "ns_hid"; }
 

@@ -16,6 +16,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g")
 
 add_library(gpb_core STATIC
   src/wire.cpp
+  src/capabilities.cpp
   src/config.cpp
   src/rt.cpp
   src/transform.cpp
@@ -44,4 +45,12 @@ add_executable(gpb-fakepad tools/fake_pad.cpp)
 # Loopback latency measurement: needs the OTG data leg plugged into the Pi's own USB-A port.
 add_executable(gpb-latency tools/latency.cpp)
 
+# Client library, for other projects to link against when they submodule this repo.
+add_library(gpb_client STATIC clients/cpp/src/client.cpp src/wire.cpp)
+target_include_directories(gpb_client PUBLIC include clients/cpp/include)
+
+add_executable(gpb-drive-example clients/cpp/examples/drive.cpp)
+target_link_libraries(gpb-drive-example PRIVATE gpb_client)
+
 install(TARGETS gpbridge gpb-discover gpb-fakepad gpb-latency RUNTIME DESTINATION bin)
+install(TARGETS gpb_client ARCHIVE DESTINATION lib)

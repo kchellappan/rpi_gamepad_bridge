@@ -26,6 +26,7 @@ class UdpSource final : public InputSource {
   bool initialize(std::string& err) override;
   int fd() const override { return fd_; }
   bool read(GamepadState& out) override;
+  void set_capabilities(const std::string& json) override { caps_json_ = json; }
   void shutdown() override;
   const char* name() const override { return "udp"; }
 
@@ -39,6 +40,7 @@ class UdpSource final : public InputSource {
     uint64_t bad_tag = 0;      // failed authentication
     uint64_t bad_frame = 0;    // wrong size, magic or version
     uint64_t wrong_peer = 0;
+    uint64_t queries = 0;
     uint64_t sessions = 0;
   };
   const Counters& counters() const { return counters_; }
@@ -48,6 +50,7 @@ class UdpSource final : public InputSource {
   int port_ = 0;
   std::string peer_;          // empty accepts any source address
   std::string key_;           // empty disables authentication
+  std::string caps_json_;
   int fd_ = -1;
   uint32_t last_seq_ = 0;
   bool have_seq_ = false;

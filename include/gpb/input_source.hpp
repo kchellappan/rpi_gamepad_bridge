@@ -53,6 +53,10 @@ class InputSource {
     return false;
   }
 
+  // Handed the sink's advertisement at startup, so a network source can answer a client
+  // asking what it is driving. Most sources have no way to be asked and ignore it.
+  virtual void set_capabilities(const std::string&) {}
+
   // Reverse channel. Default no-op so that sources with no motors ignore it for free.
   virtual void on_feedback(const FeedbackEvent&) {}
 

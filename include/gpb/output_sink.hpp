@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <string>
+#include "gpb/capabilities.hpp"
 #include "gpb/feedback.hpp"
 #include "gpb/gamepad_state.hpp"
 
@@ -41,6 +42,12 @@ class OutputSink {
   // (e.g. a rumble command). -1 if the sink has no back-channel.
   virtual int feedback_fd() const { return -1; }
   virtual bool read_feedback(FeedbackEvent&) { return false; }
+
+  // What this sink's target has. A client uses it to send the representation the target
+  // actually wants -- analog triggers versus trigger buttons being the case that bites.
+  virtual Capabilities capabilities() const {
+    return Capabilities{name(), name(), "analog", {}, {}, ""};
+  }
 
   virtual void shutdown() {}
   virtual const char* name() const = 0;
