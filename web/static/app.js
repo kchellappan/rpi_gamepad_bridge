@@ -2,8 +2,23 @@
 
 // Selection is held locally until Apply, so a poll landing mid-edit never yanks the choice
 // out from under the user.
-let pending = { config: null, source: null };
+let pending = { config: null };
+let activeKind = null;          // which tab is being viewed
 let lastConfigSignature = '';
+
+// A tab per kind of input, derived from what each config declares. The mode is not a
+// separate setting that could contradict a config -- it is which tab you are looking at,
+// and choosing a config under it selects both at once.
+const KINDS = [
+  { id: 'controller',   label: 'Controller',
+    hint: 'Driven by a controller plugged into the Pi.' },
+  { id: 'network',      label: 'Network',
+    hint: 'Driven over UDP by another machine. Capture is published back for alignment.' },
+  { id: 'programmatic', label: 'Programmatic',
+    hint: 'Driven locally over a Unix socket, for replaying a capture or scripting on the Pi.' },
+  { id: 'other',        label: 'Other',
+    hint: 'The source this config declares is not one the panel recognises.' },
+];
 
 const $ = (id) => document.getElementById(id);
 
@@ -73,26 +88,26 @@ function renderStatus(s) {
       st.submits !== undefined ? `${st.submits} reports` : null].filter(Boolean).join('  ·  ');
   }
 
-  // Mode
-  const source = pending.source ?? s.active.source;
-  document.querySelectorAll('.seg').forEach((b) => {
-    b.setAttribute('aria-pressed', String(b.dataset.source === source));
-  });
-  $('source-hint').textContent = source === 'socket'
-    ? 'Input comes from an application over the Unix socket. The controller is ignored.'
-    : 'Input comes from the controller named in the selected config.';
-
   // Config list. Only re-render when the set of files actually changes, so polling does not
   // fight the user's cursor.
-  const signature = s.configs.map((c) => c.path).join('|');
-  if (signature !== lastConfigSignature) {
+  const signature = s.configs.map((c) => c.path + ':' + (c.kind || '')).join('|');
+  // Default to the tab holding whatever is running, so the page opens where the user is.
+  const activeCfg = s.configs.find((c) => c.path === s.active.config);
+  if (activeKind === null) activeKind = (activeCfg && activeCfg.kind) || 'controller';
+
+  renderTabs(s);
+
+  if (signature !== lastConfigSignature || renderTabs.dirty) {
     lastConfigSignature = signature;
+    renderTabs.dirty = false;
     const list = $('config-list');
     list.innerHTML = '';
-    if (!s.configs.length) {
-      list.innerHTML = '<p class="hint">No .ini files found in config/.</p>';
+    const shown = s.configs.filter((c) => (c.kind || 'other') === activeKind);
+    if (!shown.length) {
+      list.innerHTML = '<p class="hint">No configs of this kind yet. The mapping wizard '
+                     + 'writes controller configs; network ones are written by hand.</p>';
     }
-    for (const c of s.configs) {
+    for (const c of shown) {
       const el = document.createElement('label');
       el.className = 'option';
       el.setAttribute('role', 'radio');
@@ -138,6 +153,48 @@ function renderStatus(s) {
   $('apply-note').textContent = isDirty(s) ? 'unsaved changes' : '';
 }
 
+function renderTabs(s) {
+  const counts = {};
+  for (const c of s.configs) {
+    const k = c.kind || 'other';
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  const activeCfg = s.configs.find((c) => c.path === s.active.config);
+  const runningKind = activeCfg && activeCfg.kind;
+
+  // Only offer tabs that hold something, except the one being viewed -- removing the tab
+  // under the user's feet because a file was deleted elsewhere would be jarring.
+  const kinds = KINDS.filter((k) => counts[k.id] || k.id === activeKind);
+  const sig = kinds.map((k) => `${k.id}:${counts[k.id] || 0}:${k.id === activeKind}:${k.id === runningKind}`).join('|');
+  if (renderTabs.sig === sig) return;
+  renderTabs.sig = sig;
+  renderTabs.dirty = true;
+
+  const bar = $('kind-tabs');
+  bar.innerHTML = '';
+  for (const k of kinds) {
+    const b = document.createElement('button');
+    b.className = 'tab';
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(k.id === activeKind));
+    // A dot marks the tab whose config is actually running, so "what is live" stays visible
+    // from whichever tab you happen to be on.
+    b.innerHTML = `${esc(k.label)}<span class="count">${counts[k.id] || 0}</span>`
+                + (k.id === runningKind ? '<span class="live-dot" title="running"></span>' : '');
+    b.addEventListener('click', () => {
+      activeKind = k.id;
+      pending.config = null;      // a selection does not carry across tabs
+      renderTabs.sig = null;
+      lastConfigSignature = '';
+      if (latest) renderStatus(latest);
+    });
+    bar.appendChild(b);
+  }
+  const hint = KINDS.find((k) => k.id === activeKind);
+  $('kind-hint').textContent = hint ? hint.hint : '';
+}
+
 function markSelection(activePath) {
   const chosen = pending.config ?? activePath;
   // Scoped to the config list on purpose. Reaching across the whole document for `.option`
@@ -158,8 +215,7 @@ function markSelection(activePath) {
 }
 
 function isDirty(s) {
-  return (pending.config && pending.config !== s.active.config) ||
-         (pending.source && pending.source !== s.active.source);
+  return Boolean(pending.config) && pending.config !== s.active.config;
 }
 
 let latest = null;
@@ -203,13 +259,6 @@ function wire() {
     });
   });
 
-  document.querySelectorAll('.seg').forEach((b) => {
-    b.addEventListener('click', () => {
-      pending.source = b.dataset.source;
-      if (latest) renderStatus(latest);
-    });
-  });
-
   $('gadget-restart').addEventListener('click', async (e) => {
     if (!confirm('Re-enumerate the gadget?\n\nThe console will see the controller disconnect '
                + 'and reconnect. Only needed if something has wedged.')) return;
@@ -231,12 +280,11 @@ function wire() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           config: pending.config ?? latest.active.config,
-          source: pending.source ?? latest.active.source,
           restart: true,
         }),
       });
       toast(r.message || 'applied', !r.ok);
-      if (r.ok) pending = { config: null, source: null };
+      if (r.ok) pending = { config: null };
     } catch (err) { toast(String(err), true); }
     e.target.disabled = false;
     refresh(); refreshLogs();

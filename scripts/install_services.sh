@@ -47,13 +47,21 @@ chown "${SUDO_USER:-${USER:-pi}}" "$STATE_DIR"
 if [[ ! -f "$ENVFILE" ]]; then
   cat > "$ENVFILE" <<ENV
 # Written by gpb-web. The .ini files remain the source of truth;
-# this only selects which one the service starts with.
+# this only selects which one the service starts with. The source
+# (controller, network, socket) is declared by the config itself.
 GPB_CONFIG=$CONFIG
-GPB_SOURCE=evdev
 ENV
   echo "wrote $ENVFILE"
 else
   echo "keeping existing $ENVFILE ($(grep -m1 '^GPB_CONFIG=' "$ENVFILE" | cut -d= -f2-))"
+fi
+
+# Strip a stale GPB_SOURCE. It no longer does anything -- the config declares its own source
+# -- but leaving a line that looks like a setting and is silently ignored is how the split
+# between the two caused trouble in the first place.
+if grep -q '^GPB_SOURCE=' "$ENVFILE"; then
+  sed -i '/^GPB_SOURCE=/d' "$ENVFILE"
+  echo "removed a stale GPB_SOURCE from $ENVFILE (the config declares its source now)"
 fi
 
 for u in gpb-gadget gpbridge; do

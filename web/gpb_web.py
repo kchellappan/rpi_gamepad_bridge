@@ -110,7 +110,14 @@ def udc_state() -> dict:
 # --------------------------------------------------------------------------- active config
 
 def read_env() -> dict:
-    values = {"GPB_CONFIG": "", "GPB_SOURCE": "evdev"}
+    """Which config the service runs. Nothing else.
+
+    GPB_SOURCE used to live here too, overriding the source the config itself declares --
+    two places stating the same fact, with the env winning silently. A config that said
+    `source = udp` could be running a Unix socket with nothing on screen to say so, which is
+    exactly what happened. The config declares its source; selecting a config selects a mode.
+    """
+    values = {"GPB_CONFIG": ""}
     try:
         for line in ENVFILE.read_text().splitlines():
             line = line.strip()
@@ -124,17 +131,15 @@ def read_env() -> dict:
     return values
 
 
-def write_env(config: str, source: str) -> tuple[bool, str]:
-    if source not in {"evdev", "socket"}:
-        return False, f"unknown source: {source}"
+def write_env(config: str) -> tuple[bool, str]:
     available = {str(p) for p in list_configs()}
     if config not in available:
         return False, "config is not one of the known files"
     body = (
         "# Written by gpb-web. The .ini files remain the source of truth;\n"
-        "# this only selects which one the service starts with.\n"
+        "# this only selects which one the service starts with. The source (controller,\n"
+        "# network, socket) is declared by the config itself.\n"
         f"GPB_CONFIG={config}\n"
-        f"GPB_SOURCE={source}\n"
     )
     with _env_lock:
         try:
@@ -162,7 +167,7 @@ def config_summary(path: Path) -> dict:
     them. A config without them falls back to its filename, so older files keep working.
     """
     out = {"source": "", "sink": "", "device": "", "heartbeat": "",
-           "title": path.stem, "description": ""}
+           "title": path.stem, "description": "", "kind": "other"}
     try:
         section = ""
         for line in path.read_text().splitlines():
@@ -181,6 +186,9 @@ def config_summary(path: Path) -> dict:
                 out["description"] = v
             elif section == "bridge" and k in ("source", "sink"):
                 out[k] = v
+                if k == "source":
+                    out["kind"] = {"evdev": "controller", "udp": "network",
+                                   "socket": "programmatic"}.get(v, "other")
             elif section == "source.evdev" and k == "device":
                 out["device"] = v
             elif section == "sink.ns_hid" and k == "heartbeat_hz":
@@ -832,7 +840,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": ok, "message": msg})
 
         if path == "/api/select":
-            ok, msg = write_env(payload.get("config", ""), payload.get("source", ""))
+            ok, msg = write_env(payload.get("config", ""))
             if ok and payload.get("restart", True):
                 rc, out = systemctl("restart", BRIDGE_UNIT)
                 return self._json({"ok": rc == 0,
@@ -860,7 +868,11 @@ class Handler(BaseHTTPRequestHandler):
             "udc": udc,
             "link": assess(bridge, udc, bstat, find_loopback_pad().get("found", False)),
             "stats": bstat,
-            "active": {"config": env["GPB_CONFIG"], "source": env["GPB_SOURCE"]},
+            # The running source is a property of the selected config, read from the file
+            # rather than tracked separately, so the two cannot disagree.
+            "active": {"config": env["GPB_CONFIG"],
+                       "source": next((c["source"] for c in configs
+                                       if c["path"] == env["GPB_CONFIG"]), "")},
             "configs": configs,
         }
 

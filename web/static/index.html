@@ -57,23 +57,14 @@
   <section class="panel">
     <div class="panel-head">
       <h2>Configuration</h2>
-      <p class="hint">The <code>.ini</code> files stay the source of truth. This selects which
-        one the service starts with.</p>
+      <p class="hint">Each config declares what drives it. Choosing one sets the mode — there
+        is no separate switch that could disagree with it.</p>
     </div>
 
-    <div class="field">
-      <label>Mode</label>
-      <div class="segmented" id="source-toggle" role="group">
-        <button data-source="evdev"  class="seg">Controller</button>
-        <button data-source="socket" class="seg">Socket</button>
-      </div>
-      <p class="hint" id="source-hint">&nbsp;</p>
-    </div>
+    <div class="tabs" id="kind-tabs" role="tablist"></div>
+    <p class="hint" id="kind-hint">&nbsp;</p>
 
-    <div class="field">
-      <label>Config file</label>
-      <div id="config-list" class="options"></div>
-    </div>
+    <div id="config-list" class="options"></div>
 
     <div class="apply">
       <button id="apply" class="btn btn-primary">Apply and restart</button>

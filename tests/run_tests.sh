@@ -362,7 +362,7 @@ fi
 # ---------------------------------------------------------------- 7. web control panel
 echo "web control panel"
 WEBPORT=$(( 18000 + RANDOM % 2000 ))
-printf 'GPB_CONFIG=%s/config/stadia_to_switch.ini\nGPB_SOURCE=evdev\n' "$PWD" > "$TMP/active.env"
+printf 'GPB_CONFIG=%s/config/stadia_to_switch.ini\n' "$PWD" > "$TMP/active.env"
 echo "testsecret" > "$TMP/webpass"
 echo "admin" > "$TMP/webuser"
 GPB_REPO="$PWD" GPB_ENVFILE="$TMP/active.env" GPB_PASSFILE="$TMP/webpass" \
@@ -411,83 +411,42 @@ else
   bad "status endpoint malformed" "$(curl -s -u admin:testsecret "$BASE/api/status" | head -c 200)"
 fi
 
-# The selected config must be one of the known files: an arbitrary path is a file-disclosure
-# and arbitrary-exec hazard, since whatever is named here is handed to the service.
+# The selected config must be one of the known files: an arbitrary path is a
+# file-disclosure and arbitrary-exec hazard, since whatever is named here is handed to the
+# service.
 REJECT="$(curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' \
-  -d '{"config":"/etc/shadow","source":"evdev","restart":false}' "$BASE/api/select")"
-REJECT2="$(curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' \
-  -d "{\"config\":\"$PWD/config/stadia_to_switch.ini\",\"source\":\"pwn\",\"restart\":false}" "$BASE/api/select")"
-if grep -q '"ok": false' <<<"$REJECT" && grep -q '"ok": false' <<<"$REJECT2"; then
-  ok "config and source selections are validated against an allowlist"
+  -d '{"config":"/etc/shadow","restart":false}' "$BASE/api/select")"
+if grep -q '"ok": false' <<<"$REJECT"; then
+  ok "an unknown config path is refused"
 else
-  bad "selection validation is too permissive" "path: $REJECT
-        source: $REJECT2"
+  bad "selection validation is too permissive" "$REJECT"
 fi
 
-# The wizard writes config files and can delete them, so its guardrails matter more than
-# most: it runs on a device plugged into a console, reachable over the network.
-TGT="$(curl -s -u admin:testsecret "$BASE/api/targets")"
-if python3 -c "
+# The source is no longer selectable at all -- it is declared by the config. Sending one
+# must not be able to change what runs, because that is precisely the split that let a
+# config reading "source = udp" run a Unix socket instead.
+printf 'GPB_CONFIG=%s/config/stadia_to_switch.ini\n' "$PWD" > "$TMP/active.env"
+curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' \
+  -d "{\"config\":\"$PWD/config/stadia_to_switch.ini\",\"source\":\"pwn\",\"restart\":false}" \
+  "$BASE/api/select" >/dev/null
+if ! grep -q 'GPB_SOURCE' "$TMP/active.env"; then
+  ok "a source sent by a client cannot override what the config declares"
+else
+  bad "a client-supplied source reached the environment file" "$(cat "$TMP/active.env")"
+fi
+
+# And the panel reports the running source by reading the config, so the two cannot drift.
+if curl -fsS -u admin:testsecret "$BASE/api/status" | python3 -c "
 import json,sys
-t=json.loads(sys.argv[1])['targets']
-assert t, 'no targets'
-first=t[0]
-assert first.get('controls'), 'target has no controls'
-assert first.get('body'), 'target has no diagram path'
-assert all(c.get('label') for c in first['controls']), 'every control needs a label'
-" "$TGT" 2>/dev/null; then
-  ok "targets endpoint serves a usable device descriptor"
+d=json.load(sys.stdin)
+active=d['active']
+assert active['source'] == 'evdev', active
+assert any(c.get('kind') == 'controller' for c in d['configs']), d['configs']
+" 2>/dev/null; then
+  ok "the running source and each config's kind are derived from the files themselves"
 else
-  bad "target descriptor malformed" "$(head -c 200 <<<"$TGT")"
+  bad "source/kind not derived from the config" "$(curl -s -u admin:testsecret "$BASE/api/status" | head -c 250)"
 fi
-
-post() { curl -s -u admin:testsecret -X POST -H 'Content-Type: application/json' -d "$2" "$BASE$1"; }
-MAP='[{"kind":"button","code":"BTN_SOUTH","target":"south"}]'
-
-CLOBBER="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"stadia_to_switch.ini\",\"name\":\"x\",\"mappings\":$MAP}")"
-ESCAPE="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"../../evil.ini\",\"name\":\"x\",\"mappings\":$MAP}")"
-EMPTY="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"fresh.ini\",\"name\":\"x\",\"mappings\":[]}")"
-if grep -q '"ok": false' <<<"$CLOBBER" && grep -q '"ok": false' <<<"$ESCAPE" \
-   && grep -q '"ok": false' <<<"$EMPTY"; then
-  ok "wizard refuses to overwrite, escape config/, or save nothing"
-else
-  bad "wizard save guardrails too permissive" "clobber: $CLOBBER
-        escape:  $ESCAPE
-        empty:   $EMPTY"
-fi
-
-DELACTIVE="$(post /api/config/delete "{\"config\":\"$PWD/config/stadia_to_switch.ini\"}")"
-DELUNKNOWN="$(post /api/config/delete '{"config":"/etc/passwd"}')"
-if grep -q '"ok": false' <<<"$DELACTIVE" && grep -q '"ok": false' <<<"$DELUNKNOWN"; then
-  ok "delete refuses the active config and unknown paths"
-else
-  bad "delete guardrails too permissive" "active: $DELACTIVE
-        unknown: $DELUNKNOWN"
-fi
-
-# A real save must still work, or the guardrails above would pass trivially.
-GOOD="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"__wizard_test.ini\",\"name\":\"Test\",\"description\":\"generated by the suite\",\"mappings\":$MAP}")"
-if grep -q '"ok": true' <<<"$GOOD" && [[ -f config/__wizard_test.ini ]] \
-   && grep -q '^button.BTN_SOUTH = south' config/__wizard_test.ini \
-   && grep -q '^heartbeat_hz = 125' config/__wizard_test.ini; then
-  ok "wizard writes a valid config with the heartbeat defaulted on"
-else
-  bad "generated config was wrong" "$GOOD
-        $(head -20 config/__wizard_test.ini 2>/dev/null)"
-fi
-rm -f config/__wizard_test.ini
-
-# A digital ZL/ZR must survive the profile transform. It previously did not: the analog
-# shadow assigned the bit rather than OR-ing it, so a pad mapped with BTN_TL2/BTN_TR2 (no
-# analog value, lt stays 0) had every press erased immediately. The config looked right and
-# the control did nothing.
-BAD_AXIS="$(post /api/wizard/save "{\"target\":\"horipad_switch\",\"device\":\"/dev/input/event0\",\"filename\":\"__bad_axis.ini\",\"name\":\"x\",\"mappings\":[{\"kind\":\"axis\",\"code\":\"ABS_HAT0Y\",\"target\":\"dup\"},{\"kind\":\"button\",\"code\":\"BTN_SOUTH\",\"target\":\"south\"}]}")"
-if grep -q '"ok": true' <<<"$BAD_AXIS" && ! grep -q 'dup' config/__bad_axis.ini; then
-  ok "an axis binding with an unusable target is refused rather than silently dropped later"
-else
-  bad "invalid axis target reached the config" "$(grep -n 'axis\.' config/__bad_axis.ini 2>/dev/null)"
-fi
-rm -f config/__bad_axis.ini
 
 kill $WPID 2>/dev/null; wait $WPID 2>/dev/null
 

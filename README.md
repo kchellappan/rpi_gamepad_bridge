@@ -117,8 +117,11 @@ restart itself. It also stays up while the bridge is stopped, which is half of w
   ```
 - **Privileges** come from a narrow sudoers rule covering four specific `systemctl` calls and
   reading the bridge's journal — the server itself runs unprivileged.
-- **Selection** is written to `/etc/gpbridge/active.env`, which the `gpbridge` unit reads.
-  The `.ini` files stay the source of truth, so the panel and SSH never disagree.
+- **Selection** is written to `/var/lib/gpbridge/active.env`, which the `gpbridge` unit
+  reads. The `.ini` files stay the source of truth, so the panel and SSH never disagree.
+- **Configs are grouped by what drives them** — Controller, Network, Programmatic — read from
+  the `source` each one declares. Choosing a config sets the mode; there is no separate
+  switch that could contradict it.
 - **No venv, no pip, no build step.** The server imports nothing outside the Python standard
   library, and CI enforces that rather than trusting it.
 
@@ -210,7 +213,7 @@ controller rather than assuming it.
 | Key | Meaning |
 |---|---|
 | `meta.name` / `meta.description` | Human-readable label shown in the control panel; falls back to the filename |
-| `bridge.source` / `bridge.sink` | Which implementations to use (`evdev`, `socket` / `ns_hid`) |
+| `bridge.source` / `bridge.sink` | Which implementations to use (`evdev`, `udp`, `socket` / `ns_hid`). `source` is the single declaration of how a config is driven — the panel groups by it, and nothing overrides it |
 | `bridge.record_path` | Capture destination; empty disables recording |
 | `bridge.rt_priority`, `bridge.cpu_affinity` | Optional `SCHED_FIFO` priority and core pinning |
 | `source.evdev.device` | Device path; globs are resolved at startup |
