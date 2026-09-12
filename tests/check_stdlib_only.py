@@ -20,6 +20,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKIP_DIRS = {"build", "build-fb", ".git", "__pycache__"}
 
+# clients/ is included deliberately: a client library that pulls in dependencies imposes
+# them on every repo that submodules this one.
+
 
 def imported_modules(path: pathlib.Path) -> set[str]:
     tree = ast.parse(path.read_text(), filename=str(path))
@@ -36,7 +39,10 @@ def imported_modules(path: pathlib.Path) -> set[str]:
 
 def main() -> int:
     stdlib = set(sys.stdlib_module_names)
+    # Local modules by filename, plus local PACKAGES by directory name -- a package is a
+    # directory with an __init__.py, so its name never appears as a .py stem.
     local = {p.stem for p in ROOT.rglob("*.py")}
+    local |= {p.parent.name for p in ROOT.rglob("__init__.py")}
     failures: list[tuple[pathlib.Path, str]] = []
     checked = 0
 

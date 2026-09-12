@@ -227,6 +227,35 @@ thousands of polls and is usually missed, while analog sticks appear to work per
 because their values are absolute. **Sticks working while buttons misbehave means the
 heartbeat is off.** The default of 125 Hz matches a conventional USB gamepad.
 
+## Driving from another machine
+
+The machine running an inference model usually cannot be the gadget: a workstation's USB
+ports are host-only, with no device-side controller, so no software makes it present itself
+as a gamepad. The Pi stays in the path and takes instructions over Ethernet.
+
+```
+  rig ──► Pi    control: UDP datagrams of GamepadState
+  rig ◄── Pi    capture: every state as it happens
+```
+
+Both directions use the same 48-byte struct, authenticated with an appended HMAC-SHA256 tag.
+See [`config/network_control.ini`](config/network_control.ini) and
+[`clients/python/`](clients/python/).
+
+The added latency is about 0.1 ms on a wired gigabit link, against a total of ~0.94 ms set by
+USB polling. **Use wired Ethernet, ideally a direct cable** — WiFi adds milliseconds and
+jitter that would dominate everything else here.
+
+Three decisions worth knowing, since each one is a trap avoided:
+
+- **UDP, not TCP.** TCP guarantees ordering and retransmission, both wrong for a control
+  stream: a retransmitted *stale* gamepad state is worse than a dropped one. It is the same
+  reason the sink coalesces rather than queues.
+- **Stale datagrams are rejected by sequence number.** UDP reorders, and a datagram that lost
+  a race has already been superseded.
+- **The client streams continuously rather than on change.** A lost "button down" otherwise
+  never happens at all. At 125 Hz, loss self-heals within 8 ms.
+
 ## Programmatic control
 
 `--source socket` accepts a fixed 48-byte `GamepadState` struct over a Unix `SOCK_SEQPACKET`

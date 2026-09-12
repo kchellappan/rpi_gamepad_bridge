@@ -36,6 +36,8 @@ class SocketSource final : public InputSource {
 
  private:
   std::string path_;
+  unsigned mode_ = 0660;
+  std::string group_;
   int listen_ = -1;
   int client_ = -1;
   uint32_t seq_ = 0;

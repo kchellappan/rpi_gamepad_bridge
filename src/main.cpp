@@ -102,6 +102,9 @@ int main(int argc, char** argv) {
   opts.record = !opts.record_path.empty();
   opts.record_ring_slots = static_cast<size_t>(cfg.get_int("bridge.record_ring_slots", 8192));
   opts.status_path = status_override.empty() ? cfg.get("bridge.status_path") : status_override;
+  opts.publish_host = cfg.get("bridge.publish_host");
+  opts.publish_port = cfg.get_int("bridge.publish_port", 9872);
+  opts.publish_key = cfg.get("bridge.publish_key");
   opts.rt_priority = cfg.get_int("bridge.rt_priority", 0);
   opts.cpu_affinity = cfg.get_int("bridge.cpu_affinity", -1);
 
