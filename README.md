@@ -178,7 +178,13 @@ press a physical button — that needs a GPIO bridged across a button's contacts
 say so rather than quietly presenting a flattering number.
 
 Expect roughly **1 ms**. Measured on the reference setup: median 0.94 ms, with essentially
-every sample falling in the same 0.1 ms bucket. That single spike *is* the finding
+every sample falling in the same 0.1 ms bucket.
+
+Buttons and axes are measured separately, alternating, because they ought to be identical --
+every control shares one 8-byte report, so they ride the same interrupt transfer. Measured:
+buttons 0.941 ms, axes 0.939 ms across 154 samples each. Worth checking rather than
+assuming, since evdev applies fuzz filtering to absolute axes that has no button equivalent;
+axis samples swing full scale so nothing can be filtered out from under them. That single spike *is* the finding
 — the USB polling interval quantises everything, and there is no software overhead visible
 above it.
 

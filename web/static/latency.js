@@ -171,6 +171,20 @@ function wireLatency() {
       + `Measured from writing a report to the gadget to the host observing it: USB and evdev. `
       + `Neither the bridge's own processing (microseconds) nor the controller's latency is `
       + `included; the latter cannot be measured this way at all.`;
+    // Buttons and axes share one report, so they should be indistinguishable. Showing both
+    // is what turns that from an assumption into a result.
+    const bt = src.button, ax = src.axis;
+    if (bt && ax && bt.n && ax.n) {
+      const gap = Math.abs(bt.p50_ms - ax.p50_ms);
+      lq('lat-split').textContent =
+        `Buttons ${bt.p50_ms.toFixed(2)} ms (n=${bt.n})  ·  Axes ${ax.p50_ms.toFixed(2)} ms `
+        + `(n=${ax.n})` + (gap < 0.15
+            ? ' — the same within measurement error, as expected: both ride the same report.'
+            : ' — a real difference, which is worth investigating.');
+      lq('lat-split').hidden = false;
+    } else {
+      lq('lat-split').hidden = true;
+    }
     lq('lat-interp').textContent = interpret(src);
     latShow('lat-results');
     lq('lat-sub').textContent = 'Bridge restarted.';
