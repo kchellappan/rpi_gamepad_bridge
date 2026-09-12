@@ -82,6 +82,7 @@ class Bridge {
   int timerfd_ = -1;
   uint64_t started_ns_ = 0;
   uint64_t status_written_ns_ = 0;
+  std::string caps_json_ = "{}";
 };
 
 }  // namespace gpb

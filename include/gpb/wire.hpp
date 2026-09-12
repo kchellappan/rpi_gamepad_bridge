@@ -15,6 +15,14 @@
 
 namespace gpb {
 
+// A capability query. Sent instead of a state, distinguishable by length alone since it is
+// nowhere near the 48 bytes a state occupies. The reply is JSON.
+//
+// Asking beats assuming: a client cannot otherwise know whether the target's triggers are
+// analog or buttons, and guessing wrong fails silently.
+inline constexpr char kQueryCaps[] = "GPBQCAPS";
+inline constexpr size_t kQueryCapsLen = 8;
+
 inline constexpr size_t kTagBytes = 16;   // truncated HMAC-SHA256
 inline constexpr size_t kDatagramMax = sizeof(GamepadState) + kTagBytes;
 

@@ -83,6 +83,20 @@ bool UdpSource::read(GamepadState& out) {
       }
     }
 
+    // A capability query: answer it and move on. Deliberately not authenticated -- it
+    // discloses only what kind of controller this bridge presents, which is not a secret,
+    // and requiring a key to ask would leave a misconfigured client with no way to discover
+    // that it is misconfigured.
+    if (static_cast<size_t>(n) == kQueryCapsLen &&
+        std::memcmp(buf, kQueryCaps, kQueryCapsLen) == 0) {
+      ++counters_.queries;
+      if (!caps_json_.empty()) {
+        ::sendto(fd_, caps_json_.data(), caps_json_.size(), MSG_DONTWAIT,
+                 reinterpret_cast<sockaddr*>(&from), fromlen);
+      }
+      continue;
+    }
+
     const size_t expected = sizeof(GamepadState) + (key_.empty() ? 0 : kTagBytes);
     if (static_cast<size_t>(n) != expected) {
       ++counters_.bad_frame;

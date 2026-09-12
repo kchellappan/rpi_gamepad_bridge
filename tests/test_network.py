@@ -138,6 +138,44 @@ with tempfile.TemporaryDirectory() as td:
         bridge.terminate()
         bridge.wait(timeout=5)
 
+# Capabilities: a client cannot know whether a target's triggers are analog or buttons, and
+# guessing wrong fails silently. Asking has to work.
+with tempfile.TemporaryDirectory() as td:
+    tmp = pathlib.Path(td)
+    ctrl, pub = free_port(), free_port()
+    bridge, hid = start_bridge(tmp, ctrl, pub, key="", peer="")
+    try:
+        q = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        q.settimeout(2.0)
+        q.sendto(b"GPBQCAPS", ("127.0.0.1", ctrl))
+        import json as _json
+        try:
+            caps = _json.loads(q.recv(4096).decode())
+        except (OSError, ValueError) as e:
+            caps = {}
+            check("the bridge answers a capability query", False, str(e))
+        if caps:
+            check("the bridge answers a capability query", True)
+            check("capabilities name the target and its trigger style",
+                  caps.get("target") and caps.get("trigger_mode") in ("digital", "analog"),
+                  repr(caps))
+            check("the HORIPAD advertises digital triggers",
+                  caps.get("trigger_mode") == "digital", repr(caps.get("trigger_mode")))
+
+        # The regression this whole mechanism exists around: a client streaming ANALOG
+        # triggers produced nothing at all on a target whose ZL/ZR are buttons, because the
+        # analog-to-digital shadow lives in a transform that canonical sources skip.
+        before = len(reports(hid))
+        q.sendto(GamepadState(lt=255, rt=255).pack(seq=100), ("127.0.0.1", ctrl))
+        time.sleep(0.3)
+        after = reports(hid)
+        zl_zr = any((r[0] & 0x40) and (r[0] & 0x80) for r in after[before:])
+        check("analog trigger values reach a target whose triggers are buttons", zl_zr,
+              "reports: " + " ".join(r.hex() for r in after[before:]))
+    finally:
+        bridge.terminate()
+        bridge.wait(timeout=5)
+
 # The Python and C++ definitions of the state must not drift: a silent divergence would
 # corrupt every capture and every injected input at once, while looking entirely healthy.
 header = (ROOT / "include" / "gpb" / "gamepad_state.hpp").read_text()

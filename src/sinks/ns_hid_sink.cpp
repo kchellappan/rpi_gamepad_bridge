@@ -90,6 +90,19 @@ bool NsHidSink::initialize(std::string& err) {
   return true;
 }
 
+Capabilities NsHidSink::capabilities() const {
+  return Capabilities{
+      "ns_hid",
+      "HORIPAD for Nintendo Switch",
+      "digital",
+      {"lx", "ly", "rx", "ry"},
+      {"south", "east", "west", "north", "l1", "r1", "l2", "r2", "select", "start", "l3",
+       "r3", "guide", "misc1", "dup", "ddown", "dleft", "dright"},
+      "ZL and ZR are buttons on this target, so l2/r2 is the direct representation. Analog "
+      "lt/rt is also accepted and thresholded, so a controller with real triggers can send "
+      "either."};
+}
+
 PokkenReport NsHidSink::encode(const GamepadState& s, bool face_by_position) {
   PokkenReport r{};
 
@@ -112,8 +125,14 @@ PokkenReport NsHidSink::encode(const GamepadState& s, bool face_by_position) {
 
   if (s.pressed(btn::kL1)) r.buttons_lo |= kL;
   if (s.pressed(btn::kR1)) r.buttons_lo |= kR;
-  if (s.pressed(btn::kL2)) r.buttons_lo |= kZL;
-  if (s.pressed(btn::kR2)) r.buttons_lo |= kZR;
+  // Accept either representation of a trigger.
+  //
+  // ProfileTransform shadows analog onto digital, but it is skipped for canonical sources
+  // -- which is every network and socket client. Without this, a client streaming lt/rt
+  // because its own pad has analog triggers produced no ZL/ZR at all, silently, and nothing
+  // in the pipeline could tell it why. The threshold matches the transform's.
+  if (s.pressed(btn::kL2) || s.lt > 40) r.buttons_lo |= kZL;
+  if (s.pressed(btn::kR2) || s.rt > 40) r.buttons_lo |= kZR;
 
   if (s.pressed(btn::kSelect)) r.buttons_hi |= kMinus;
   if (s.pressed(btn::kStart))  r.buttons_hi |= kPlus;

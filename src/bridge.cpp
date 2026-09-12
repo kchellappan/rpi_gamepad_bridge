@@ -34,6 +34,7 @@ bool Bridge::initialize(std::string& err) {
   // Slow phase for both halves, before any hot-path work. This is the seam an
   // authenticating sink would use for its handshake.
   if (!sink_->initialize(err)) return false;
+  src_->set_capabilities(sink_->capabilities().to_json());
   if (!src_->initialize(err)) return false;
 
   if (opts_.record && !recorder_.start(opts_.record_path, opts_.record_ring_slots, err))
@@ -119,20 +120,22 @@ void Bridge::publish_status(bool force) {
   const uint64_t since_ok_ms =
       stats_.last_write_ok_ns ? (now - stats_.last_write_ok_ns) / 1000000ull : 0;
 
-  char buf[640];
+  char buf[1400];
   const int n = std::snprintf(
       buf, sizeof(buf),
       "{\"pid\":%d,\"uptime_ms\":%llu,\"source_connected\":%s,\"source\":\"%s\","
       "\"sink\":\"%s\",\"updates\":%llu,\"submits\":%llu,\"coalesced\":%llu,"
       "\"heartbeats\":%llu,\"disconnects\":%llu,\"reconnects\":%llu,"
-      "\"write_failures\":%llu,\"ever_wrote\":%s,\"since_write_ok_ms\":%llu}\n",
+      "\"write_failures\":%llu,\"ever_wrote\":%s,\"since_write_ok_ms\":%llu,"
+      "\"capabilities\":%s}\n",
       static_cast<int>(getpid()), (unsigned long long)((now - started_ns_) / 1000000ull),
       src_ && src_->connected() ? "true" : "false", src_ ? src_->name() : "",
       sink_ ? sink_->name() : "", (unsigned long long)stats_.updates,
       (unsigned long long)stats_.submits, (unsigned long long)stats_.coalesced,
       (unsigned long long)stats_.heartbeats, (unsigned long long)stats_.disconnects,
       (unsigned long long)stats_.reconnects, (unsigned long long)stats_.write_failures,
-      stats_.last_write_ok_ns ? "true" : "false", (unsigned long long)since_ok_ms);
+      stats_.last_write_ok_ns ? "true" : "false", (unsigned long long)since_ok_ms,
+      caps_json_.c_str());
   if (n <= 0) return;
 
   const std::string tmp = opts_.status_path + ".tmp";
@@ -151,6 +154,7 @@ int Bridge::run() {
   int registered_src_fd = -1;
   running_ = true;
   started_ns_ = now_mono_ns();
+  if (sink_) caps_json_ = sink_->capabilities().to_json();
   publish_status(true);
   epoll_event events[8];
   // Seed from reality rather than assuming: the source may legitimately have started

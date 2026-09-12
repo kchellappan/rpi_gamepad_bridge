@@ -239,8 +239,24 @@ as a gamepad. The Pi stays in the path and takes instructions over Ethernet.
 ```
 
 Both directions use the same 48-byte struct, authenticated with an appended HMAC-SHA256 tag.
-See [`config/network_control.ini`](config/network_control.ini) and
-[`clients/python/`](clients/python/).
+See [`config/network_control.ini`](config/network_control.ini),
+[`clients/python/`](clients/python/) and [`clients/cpp/`](clients/cpp/).
+
+### Ask what you are driving
+
+A client cannot know whether a target's triggers are analog or buttons, and guessing wrong
+**fails silently**. The HORIPAD's ZL/ZR are buttons; a PC target would want analog values.
+So the bridge advertises:
+
+```python
+caps = query_capabilities("192.168.1.50")
+caps["trigger_mode"]   # "digital" -- send l2/r2 on this target
+caps["axes"]           # which normalized axes mean anything here
+```
+
+The same document appears in the bridge's status file, so the control panel shows it too.
+Sinks accept either representation wherever they reasonably can — advertising is for sending
+the right thing, not for rejecting the other one.
 
 The added latency is about 0.1 ms on a wired gigabit link, against a total of ~0.94 ms set by
 USB polling. **Use wired Ethernet, ideally a direct cable** — WiFi adds milliseconds and
