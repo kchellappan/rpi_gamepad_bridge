@@ -18,6 +18,11 @@
 // So: write the report directly, and stop the bridge for the duration since it holds the
 // gadget open.
 //
+// Buttons and axes are measured separately and reported separately. They share one 8-byte
+// report, so they ought to be identical -- but "ought to" is what this tool exists to
+// replace, and evdev applies fuzz filtering to absolute axes that has no button equivalent.
+// Axis samples swing full scale so nothing can be filtered out from under them.
+//
 // Two things are NOT included. The bridge's own processing, as above. And the controller's
 // latency, which cannot be measured this way at all -- nothing here can press a physical
 // button. That needs a GPIO bridged across a button's contacts.
@@ -56,6 +61,7 @@ struct Report {
 static_assert(sizeof(Report) == 8, "the gadget's report is 8 bytes");
 
 constexpr uint8_t kB = 1 << 1;
+constexpr uint8_t kAxisLo = 0x00, kAxisHi = 0xff;
 
 // Set by SIGINT/SIGTERM so a run can be stopped from the panel without losing the samples
 // already taken. sig_atomic_t because a handler may write it at any point.
@@ -124,15 +130,18 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::vector<double> ms;
+  std::vector<double> ms, button_ms, axis_ms;
   int lost = 0;
   const uint64_t deadline = now_ns() + static_cast<uint64_t>(duration_ms) * 1000000ull;
 
+  // One report state carried across samples, so each write changes exactly one thing and the
+  // event we wait for is unambiguous.
+  Report r;
+
   for (int i = 0; !g_stop && now_ns() < deadline; ++i) {
-    Report r;
-    // Alternate, so every sample is a genuine change. Sending an identical report twice
-    // would produce nothing for the host to notice.
-    r.buttons_lo = (i % 2 == 0) ? kB : 0;
+    const bool axis_sample = (i % 2 == 1);
+    if (axis_sample) r.lx = (r.lx == kAxisHi) ? kAxisLo : kAxisHi;
+    else r.buttons_lo = r.buttons_lo ? 0 : kB;
 
     drain(dev);
     const uint64_t t0 = now_ns();
@@ -142,6 +151,7 @@ int main(int argc, char** argv) {
       continue;
     }
 
+    const uint16_t want = axis_sample ? EV_ABS : EV_KEY;
     uint64_t t1 = 0;
     int waited = 0;
     while (waited < timeout_ms) {
@@ -152,7 +162,7 @@ int main(int argc, char** argv) {
       input_event e;
       bool matched = false;
       while (::read(dev, &e, sizeof(e)) == static_cast<ssize_t>(sizeof(e))) {
-        if (e.type == EV_KEY) matched = true;
+        if (e.type == want) matched = true;
       }
       if (matched) { t1 = seen; break; }
       waited = static_cast<int>((now_ns() - t0) / 1000000ull);
@@ -163,9 +173,9 @@ int main(int argc, char** argv) {
     } else {
       const double sample = static_cast<double>(t1 - t0) / 1e6;
       ms.push_back(sample);
-      // One line per sample, flushed, so a reader can show progress while the run
-      // continues. The summary comes last and is the only line starting with '{'.
-      std::printf("%.3f\n", sample);
+      (axis_sample ? axis_ms : button_ms).push_back(sample);
+      // Tagged so a reader can separate them; flushed so progress is visible mid-run.
+      std::printf("%c %.3f\n", axis_sample ? 'a' : 'b', sample);
       std::fflush(stdout);
     }
     usleep(static_cast<useconds_t>(settle_ms) * 1000);
@@ -183,6 +193,8 @@ int main(int argc, char** argv) {
     return 1;
   }
   std::sort(ms.begin(), ms.end());
+  std::sort(button_ms.begin(), button_ms.end());
+  std::sort(axis_ms.begin(), axis_ms.end());
   double sum = 0;
   for (double v : ms) sum += v;
 
@@ -192,6 +204,11 @@ int main(int argc, char** argv) {
               pct(ms, 0.95), ms.back(),
               sum / static_cast<double>(ms.size()));
   for (size_t i = 0; i < ms.size(); ++i) std::printf("%s%.3f", i ? "," : "", ms[i]);
-  std::printf("]}\n");
+  std::printf("],\"button\":{\"n\":%zu,\"p50_ms\":%.3f,\"max_ms\":%.3f},"
+              "\"axis\":{\"n\":%zu,\"p50_ms\":%.3f,\"max_ms\":%.3f}}\n",
+              button_ms.size(), pct(button_ms, 0.50),
+              button_ms.empty() ? 0.0 : button_ms.back(),
+              axis_ms.size(), pct(axis_ms, 0.50),
+              axis_ms.empty() ? 0.0 : axis_ms.back());
   return 0;
 }

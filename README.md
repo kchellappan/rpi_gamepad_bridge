@@ -177,10 +177,17 @@ The controller's own latency is not included and cannot be, because nothing in s
 press a physical button — that needs a GPIO bridged across a button's contacts. The results
 say so rather than quietly presenting a flattering number.
 
-Expect roughly **1 ms**. Measured on the reference setup: median 0.94 ms, with essentially
-every sample falling in the same 0.1 ms bucket. That single spike *is* the finding
-— the USB polling interval quantises everything, and there is no software overhead visible
+Expect roughly **1 ms**. On the [reference setup](#verified-configuration) — Raspberry Pi 5,
+Bookworm with kernel 6.6.51, gadget enumerated at high speed — the median is **0.94 ms**, and
+essentially every sample lands in a single 0.1 ms bin of the histogram. That spike is the
+finding: the USB polling interval quantises everything, and no software overhead is visible
 above it.
+
+Buttons and axes are measured separately, alternating, because they ought to be identical —
+every control shares one 8-byte report, so they ride the same interrupt transfer. On the same
+setup: **buttons 0.941 ms, axes 0.939 ms**, 154 samples each. Worth checking rather than
+assuming, because evdev applies fuzz filtering to absolute axes that has no button
+equivalent; axis samples swing full scale so nothing can be filtered out from under them.
 
 While the cable is looped back, the panel will report **"Looped back to this Pi"** rather
 than a healthy link. That is correct: `usbhid` only polls a HID device's interrupt endpoint

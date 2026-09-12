@@ -216,8 +216,9 @@
           <div class="stat"><span class="stat-v" id="run-left">60</span><span class="stat-k">seconds left</span></div>
         </div>
         <svg id="run-chart" class="chart" role="img" aria-label="latency so far"></svg>
-        <p class="hint">Injecting inputs and timing when the host sees them. The worst case is
-          what a longer run is for — it needs time to show up.</p>
+        <p class="hint">Alternating button presses and full-scale stick movements, timing when
+          the host sees each. The worst case is what a longer run is for — it needs time to
+          show up.</p>
         <div class="actions">
           <button id="lat-stop" class="btn btn-primary">Stop and show results</button>
         </div>
@@ -232,6 +233,7 @@
         </div>
         <svg id="lat-chart" class="chart" role="img" aria-label="latency distribution"></svg>
         <p class="hint" id="lat-detail">&nbsp;</p>
+        <p class="hint" id="lat-split" hidden>&nbsp;</p>
         <p class="wiz-note" id="lat-interp"></p>
         <div class="actions">
           <button id="lat-again" class="btn">Run again</button>
