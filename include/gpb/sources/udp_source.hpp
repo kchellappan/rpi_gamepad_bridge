@@ -27,6 +27,7 @@ class UdpSource final : public InputSource {
   int fd() const override { return fd_; }
   bool read(GamepadState& out) override;
   void set_capabilities(const std::string& json) override { caps_json_ = json; }
+  std::string counters_json() const override;
   void shutdown() override;
   const char* name() const override { return "udp"; }
 

@@ -54,12 +54,31 @@ function renderStatus(s) {
   // used to get wrong: a USB link can report itself connected while the endpoint is dead
   // and every report fails, which looked identical to working.
   const link = s.link || { level: 'unknown', headline: '', detail: '' };
+  const input = s.input || { level: 'unknown', headline: '', detail: '' };
+
+  // One banner, showing whichever end is actually broken. Input problems are surfaced here
+  // as loudly as USB ones because they fail identically from the user's side -- the service
+  // healthy, the client apparently sending, and nothing happening.
+  const worst = link.level === 'bad' ? link
+              : input.level === 'bad' ? input
+              : link.level !== 'ok' ? link : input;
   const banner = $('link-banner');
-  banner.className = 'banner ' + link.level;
-  banner.hidden = link.level === 'ok';
-  $('link-head').textContent = link.headline || '';
-  $('link-detail').textContent = link.detail || '';
-  $('link-fix').hidden = link.level !== 'bad';
+  banner.className = 'banner ' + worst.level;
+  banner.hidden = worst.level === 'ok';
+  $('link-head').textContent = worst.headline || '';
+  $('link-detail').textContent = worst.detail || '';
+  // Re-enumerating only helps the USB end; offering it for an input problem would be
+  // pointing at the wrong half of the system.
+  $('link-fix').hidden = !(worst === link && link.level === 'bad');
+
+  const st0 = s.stats || {};
+  $('input-state').textContent = input.headline || '—';
+  $('input-state').className = 'state ' + (input.level === 'ok' ? 'ok'
+                                        : input.level === 'bad' ? 'bad' : 'warn');
+  const sc = st0.source_counters || {};
+  $('input-meta').textContent = [st0.source, s.active && s.active.source]
+      .filter((v, i, a) => v && a.indexOf(v) === i).join('  ·  ') || ' ';
+  $('input-detail').textContent = input.detail || '';
 
   // Bridge
   $('bridge-state').textContent = s.bridge.active;
