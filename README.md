@@ -206,15 +206,18 @@ measurement opens the node itself, which is why it works regardless.
 
 ## Configuration
 
-One INI file selects the source and sink, maps the controller, and shapes the sticks. Two
-fully commented examples ship, both measured on real hardware:
+One INI file selects the source and sink, maps the controller, and shapes the sticks. Three
+fully commented examples ship, all measured on real controllers:
 
 - [`config/stadia_to_switch.ini`](config/stadia_to_switch.ini) — Google Stadia controller
 - [`config/dualsense_to_switch.ini`](config/dualsense_to_switch.ini) — Sony DualSense (PS5)
+- [`config/switch_pro_to_switch.ini`](config/switch_pro_to_switch.ini) — Nintendo Switch Pro
+  Controller; measured on a laptop, not yet run on the Pi (see
+  [Verified configuration](#verified-configuration))
 
-They are worth reading side by side. The two pads disagree about which axis carries the
-right stick, whether the d-pad is a hat or four buttons, and — for the same two evdev codes
-— which physical positions they describe. That disagreement is the case for measuring a
+The Stadia and DualSense files are worth reading side by side. The two pads disagree about
+which axis carries the right stick, whether the d-pad is a hat or four buttons, and — for the
+same two evdev codes — which physical positions they describe. That disagreement is the case for measuring a
 controller rather than assuming it.
 
 | Key | Meaning |
@@ -385,6 +388,16 @@ what surfaced several bugs: its d-pad arrives as a **hat** rather than four butt
 triggers bind **digitally** as `BTN_TL2`/`BTN_TR2` rather than as analog axes, and it has no
 control to spare for Capture — its Create button reports `BTN_SELECT`, which is already
 Minus.
+
+The **Nintendo Switch Pro Controller** (wired) is not in the table above, because it has not
+been run on the Pi or against a console. Its config was measured with the wizard on a Linux
+laptop (kernel 7.0), where the bridge opens it and binds every control. It needs no code: the
+kernel's `hid-nintendo` driver, built as a module in the Pi 5 kernel, has the same button
+table on 6.6 as on 7.0. Two things differ from the pads above. The driver adds a second
+"(IMU)" input node for the motion sensors, which the config's `-event-joystick` glob and the
+panel's device list both leave out. And the button codes follow the printed letter, which on
+a Nintendo layout matches position, so `face_by_position` must stay `true` — `false` would
+swap A with B and X with Y.
 
 Newer kernels are untested, and every further controller is an untested case until someone
 runs the wizard on it.
