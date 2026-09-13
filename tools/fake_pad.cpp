@@ -118,6 +118,7 @@ int create_device() {
 int g_hold_us = 250000;
 int g_gap_us = 1500000;
 bool g_park_axes = true;
+bool g_digital_rt = false;
 
 void axis_pulse(int fd, uint16_t code, int32_t to, int32_t rest) {
   emit(fd, EV_ABS, code, to);
@@ -182,7 +183,10 @@ int run_wizard_script(int fd, int lead_in_ms) {
   for (const auto& a : axes) {
     std::printf("  %s\n", a.label);
     std::fflush(stdout);
-    axis_pulse(fd, a.code, a.to, a.rest);
+    // --mixed-triggers answers the right-trigger prompt with a button, as a pad whose ZR is
+    // digital does, while the left stays analog. One run then covers both kinds of trigger.
+    if (g_digital_rt && a.code == ABS_GAS) button_pulse(fd, BTN_TR2);
+    else axis_pulse(fd, a.code, a.to, a.rest);
     usleep(gap_us);
   }
 
@@ -217,14 +221,16 @@ int run_wizard_script(int fd, int lead_in_ms) {
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "";
   if (mode != "--hold" && mode != "--wizard-script" && mode != "--wizard-script-sloppy" &&
-      mode != "--wizard-script-cold" && mode != "--emit-test") {
+      mode != "--wizard-script-cold" && mode != "--wizard-script-mixed-triggers" &&
+      mode != "--emit-test") {
     std::fprintf(stderr,
                  "usage: %s [--hold | --wizard-script [lead_in_ms] | "
                  "--wizard-script-sloppy [lead_in_ms] | --wizard-script-cold [lead_in_ms] | "
-                 "--emit-test]\n",
+                 "--wizard-script-mixed-triggers [lead_in_ms] | --emit-test]\n",
                  argv[0]);
     return 2;
   }
+  if (mode == "--wizard-script-mixed-triggers") g_digital_rt = true;
   if (mode == "--wizard-script-cold") {
     g_park_axes = false;   // leave absinfo uninitialized, as a real Stadia does
     g_hold_us = 1400000;
