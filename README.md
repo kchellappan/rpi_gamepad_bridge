@@ -207,13 +207,12 @@ measurement opens the node itself, which is why it works regardless.
 ## Configuration
 
 One INI file selects the source and sink, maps the controller, and shapes the sticks. Three
-fully commented examples ship, all measured on real controllers:
+fully commented examples ship, all measured on real hardware:
 
 - [`config/stadia_to_switch.ini`](config/stadia_to_switch.ini) — Google Stadia controller
 - [`config/dualsense_to_switch.ini`](config/dualsense_to_switch.ini) — Sony DualSense (PS5)
 - [`config/switch_pro_to_switch.ini`](config/switch_pro_to_switch.ini) — Nintendo Switch Pro
-  Controller; measured on a laptop, not yet run on the Pi (see
-  [Verified configuration](#verified-configuration))
+  Controller
 
 The Stadia and DualSense files are worth reading side by side. The two pads disagree about
 which axis carries the right stick, whether the d-pad is a hat or four buttons, and — for the
@@ -376,12 +375,12 @@ imports outside the standard library. CI runs all of it on every push.
 |---|---|
 | Board | Raspberry Pi 5 Model B Rev 1.0 |
 | OS | Raspberry Pi OS Bookworm, `2024-11-19` arm64, kernel `6.6.51` |
-| Controllers | Google Stadia Controller rev. A, and Sony DualSense (PS5) — both wired |
+| Controllers | Google Stadia Controller rev. A, Sony DualSense (PS5), and Nintendo Switch Pro Controller — all wired |
 | Console | Nintendo Switch 2, via the official dock |
 
-Both controllers pass the console's own controller test on sticks and buttons. The DualSense
-was mapped entirely through the web wizard with no code changes for the pad itself, which is
-the `EvdevSource` abstraction doing what it is for.
+The Stadia and DualSense pass the console's own controller test on sticks and buttons. The
+DualSense was mapped entirely through the web wizard with no code changes for the pad itself,
+which is the `EvdevSource` abstraction doing what it is for.
 
 Its layout differs from the Stadia's in ways worth knowing, because those differences are
 what surfaced several bugs: its d-pad arrives as a **hat** rather than four buttons, its
@@ -389,15 +388,20 @@ triggers bind **digitally** as `BTN_TL2`/`BTN_TR2` rather than as analog axes, a
 control to spare for Capture — its Create button reports `BTN_SELECT`, which is already
 Minus.
 
-The **Nintendo Switch Pro Controller** (wired) is not in the table above, because it has not
-been run on the Pi or against a console. Its config was measured with the wizard on a Linux
-laptop (kernel 7.0), where the bridge opens it and binds every control. It needs no code: the
-kernel's `hid-nintendo` driver, built as a module in the Pi 5 kernel, has the same button
-table on 6.6 as on 7.0. Two things differ from the pads above. The driver adds a second
-"(IMU)" input node for the motion sensors, which the config's `-event-joystick` glob and the
-panel's device list both leave out. And the button codes follow the printed letter, which on
-a Nintendo layout matches position, so `face_by_position` must stay `true` — `false` would
-swap A with B and X with Y.
+The **Nintendo Switch Pro Controller** also passes the console's controller test on every
+button and both sticks. It needed no code: the kernel's `hid-nintendo` driver, built as a
+module in the Pi 5 kernel, presents it through evdev. Three things differ from the pads above:
+
+- **It creates two input nodes.** The second is for the motion sensors. Its by-id link ends
+  `-event-if00`, so the config's `-event-joystick` glob and the panel's device list both
+  leave it out.
+- **Its device name depends on the kernel.** The same pad is "Nintendo Switch Pro Controller"
+  on 6.6 and "Nintendo Co., Ltd. Pro Controller" on 7.0. The by-id path is the same on both.
+- **Its button codes follow the printed letter,** which on a Nintendo layout matches position.
+  So `face_by_position` must stay `true`; `false` would swap A with B and X with Y.
+
+Its config was measured with the wizard on a laptop and then run unchanged on the Pi. The
+evdev codes were identical on both kernels.
 
 Newer kernels are untested, and every further controller is an untested case until someone
 runs the wizard on it.
