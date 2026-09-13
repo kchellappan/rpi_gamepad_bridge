@@ -214,6 +214,48 @@ print(' '.join(d[i:i+8].hex() for i in range(0,len(d)//8*8,8)))")"
   fi
 fi
 
+# ---------------------------------------------------------------- 5b. terminal wizard triggers
+echo "terminal wizard binds both analog and digital triggers (needs uinput)"
+# The terminal wizard's trigger steps used to accept only an axis, and nothing later asks for
+# l2/r2, so a pad with digital ZL/ZR -- a Switch Pro Controller -- came out with no triggers
+# at all and no error. The fake pad here has an analog left trigger and a digital right one.
+if [[ ! -x "$FAKE" ]]; then
+  echo "  SKIP  gpb-fakepad not built"
+elif ! sudo -n true 2>/dev/null; then
+  echo "  SKIP  no passwordless sudo for /dev/uinput"
+elif [[ ! -e /dev/uinput ]]; then
+  echo "  SKIP  /dev/uinput unavailable in this environment"
+else
+  sudo -n "$FAKE" --wizard-script-mixed-triggers 3000 > "$TMP/wpad.log" 2>&1 &
+  WPADPID=$!
+  NODE=""
+  for _ in $(seq 1 40); do
+    NODE="$(grep -o '/dev/input/event[0-9]*' "$TMP/wpad.log" | head -1)"
+    [[ -n "$NODE" ]] && break
+    sleep 0.1
+  done
+  if [[ -z "$NODE" ]]; then
+    echo "  SKIP  virtual pad did not appear ($(head -1 "$TMP/wpad.log"))"
+    wait $WPADPID 2>/dev/null
+  else
+    WIZ="$(sudo -n timeout 150 "$BUILD/gpb-discover" wizard "$NODE" 2>&1)"
+    wait $WPADPID 2>/dev/null
+    # The first and last button prompts prove the open-loop script and the wizard stayed in
+    # step. A trigger step that times out shifts every later prompt, and the result is
+    # BTN_TL bound to south and BTN_TRIGGER_HAPPY1 to r3. Do not use a hat line for this:
+    # button prompts also accept a hat, so an out-of-step run still binds the hats correctly.
+    # That check was tried, and it passed on a run that was out of step.
+    if grep -qx 'axis.ABS_BRAKE = lt' <<<"$WIZ" && grep -qx 'button.BTN_TR2 = r2' <<<"$WIZ" \
+       && grep -qx 'button.BTN_SOUTH = south' <<<"$WIZ" \
+       && grep -qx 'button.BTN_TRIGGER_HAPPY1 = misc1' <<<"$WIZ"; then
+      ok "terminal wizard binds an analog trigger as lt and a digital one as r2"
+    else
+      bad "terminal wizard did not bind both triggers" \
+          "$(grep -E '^(axis|button)\.|timed out' <<<"$WIZ" | tr '\n' ';')"
+    fi
+  fi
+fi
+
 # ---------------------------------------------------------------- 6. static web assets
 echo "web assets"
 JS_OK=1

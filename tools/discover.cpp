@@ -107,6 +107,13 @@ int cmd_caps(const char* path) {
 struct AxisPrompt {
   const char* target;
   const char* instruction;
+  // Set for the triggers only: the button target to bind when the pad answers with a button.
+  //
+  // A trigger may be digital -- a Switch Pro Controller's ZL/ZR are nothing but BTN_TL2 and
+  // BTN_TR2. These steps used to accept only an axis, and no later prompt asks for l2/r2, so
+  // on such a pad the triggers timed out and were silently absent from the output. The web
+  // wizard never had this problem because its ZL/ZR steps capture "any"; this matches it.
+  const char* button_target = nullptr;
 };
 struct ButtonPrompt {
   const char* target;
@@ -313,15 +320,6 @@ Capture capture_control(int fd, const std::map<uint16_t, AbsInfo>& neutral,
   return out;
 }
 
-bool capture_axis(int fd, const std::map<uint16_t, AbsInfo>& neutral,
-                  const std::set<uint16_t>& exclude, std::set<uint16_t>& observed,
-                  std::string& code_name, bool& invert, int timeout_ms) {
-  Capture c = capture_control(fd, neutral, observed, exclude, {}, false, true, timeout_ms);
-  code_name = c.code;
-  invert = c.invert;
-  return c.ok;
-}
-
 bool capture_button(int fd, const std::set<uint16_t>& exclude_keys, std::string& code_name,
                     bool& is_axis, bool& axis_invert, int timeout_ms) {
   static const std::map<uint16_t, AbsInfo> kNoAxes;
@@ -366,8 +364,8 @@ int cmd_wizard(const char* path) {
       {"ly", "Push the LEFT stick fully DOWN"},
       {"rx", "Push the RIGHT stick fully RIGHT"},
       {"ry", "Push the RIGHT stick fully DOWN"},
-      {"lt", "Squeeze the LEFT trigger fully"},
-      {"rt", "Squeeze the RIGHT trigger fully"},
+      {"lt", "Squeeze or press the LEFT trigger fully", "l2"},
+      {"rt", "Squeeze or press the RIGHT trigger fully", "r2"},
   };
   const ButtonPrompt button_prompts[] = {
       {"south", "Press the BOTTOM face button"},
@@ -399,17 +397,31 @@ int cmd_wizard(const char* path) {
       std::printf("(not at rest: %s) ", blocker.empty() ? "unknown" : blocker.c_str());
     drain(fd);
 
-    std::string code;
-    bool invert = false;
-    if (capture_axis(fd, neutral, used_axes, observed_axes, code, invert, kStepTimeoutMs)) {
+    const bool accept_button = p.button_target != nullptr;
+    const Capture c = capture_control(fd, neutral, observed_axes, used_axes, used_keys,
+                                      accept_button, true, kStepTimeoutMs);
+    if (!c.ok) {
+      std::printf("(timed out, skipped)\n");
+      continue;
+    }
+    bool ok = false;
+    const uint16_t code = gpb::evdev_code_from_name(c.code, ok);
+    if (!c.is_axis) {
+      std::printf("%s\n", c.code.c_str());
+      button_lines.push_back("button." + c.code + " = " + p.button_target);
+      used_keys.insert(code);
+    } else if (c.code == "ABS_HAT0X" || c.code == "ABS_HAT0Y") {
+      // capture_control lets a hat answer any step. It can only ever mean the hat, so bind it
+      // as one -- the same rule the button prompts and the web wizard apply. Writing it
+      // against this step's target would put a d-pad on a stick.
+      std::printf("%s\n", c.code.c_str());
+      axis_lines.push_back("axis." + c.code + " = " + (c.code == "ABS_HAT0X" ? "hatx" : "haty"));
+    } else {
       // "Fully right" and "fully down" are both the POSITIVE direction in our convention
       // (+X right, +Y down), so a negative excursion means the device disagrees with us.
-      std::printf("%s%s\n", invert ? "-" : "", code.c_str());
-      axis_lines.push_back("axis." + code + " = " + (invert ? "-" : "") + p.target);
-      bool ok = false;
-      used_axes.insert(gpb::evdev_code_from_name(code, ok));
-    } else {
-      std::printf("(timed out, skipped)\n");
+      std::printf("%s%s\n", c.invert ? "-" : "", c.code.c_str());
+      axis_lines.push_back("axis." + c.code + " = " + (c.invert ? "-" : "") + p.target);
+      used_axes.insert(code);
     }
   }
 
