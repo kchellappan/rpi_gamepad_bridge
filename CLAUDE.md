@@ -73,7 +73,7 @@ Do not re-derive these; they are documented where someone would hit them:
 |---|---|
 | Charge-only cables fail completely silently | README, under Parts |
 | `heartbeat_hz = 0` makes sticks work and buttons not | README, Configuration |
-| evdev's `BTN_NORTH`/`BTN_WEST` lie about position | both mapping inis in `config/`, measured on two pads |
+| evdev's `BTN_NORTH`/`BTN_WEST` lie about position | `config/README.md` and the mapping inis, measured on three pads |
 | A d-pad may be a hat, not four buttons | `config/dualsense_to_switch.ini` |
 | A held control is not a resting control | comments in `tools/discover.cpp` |
 | CSS stacking and `[hidden]` overrides | assertions and comments in `tests/run_tests.sh` |
